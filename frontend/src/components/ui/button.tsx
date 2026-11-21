@@ -18,9 +18,9 @@ export const buttonVariants = cva(
         link: "h-auto px-0 font-semibold text-link underline-offset-4 hover:underline",
       },
       size: {
-        sm: "h-8 px-3 text-[0.8125rem]",
+        sm: "h-8 px-3 text-sm",
         md: "h-9 px-3.5 text-sm",
-        lg: "h-11 px-5 text-[0.9375rem]",
+        lg: "h-11 px-5 text-base",
         icon: "size-9",
         "icon-sm": "size-8",
       },
@@ -41,6 +41,8 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     return (
       <Comp
         ref={ref}
+        // Marks link-buttons too (asChild), so the contrast theme doesn't underline them like text links.
+        data-button=""
         type={asChild ? undefined : (type ?? "button")}
         className={cn(buttonVariants({ variant, size }), variant === "link" && "h-auto", className)}
         {...props}

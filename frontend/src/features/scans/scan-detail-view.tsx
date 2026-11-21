@@ -86,11 +86,11 @@ function PhaseStepper({ phase, done }: { phase: ScanRun["phase"]; done: boolean 
               state === "current" ? "border-accent bg-accent/[0.07]" : state === "done" ? "border-line bg-surface-2" : "border-dashed border-line-strong",
             )}
           >
-            <span className="flex items-center gap-1.5 text-[0.8125rem] font-bold">
+            <span className="flex items-center gap-1.5 text-sm font-bold">
               {state === "done" ? <Check className="size-3.5 text-success" strokeWidth={3} aria-hidden /> : state === "current" ? <span className="size-2 animate-pulse-dot rounded-full bg-accent" aria-hidden /> : null}
               {p.label}
             </span>
-            <span className="mono text-[0.6875rem] text-ink-2">{p.tool}</span>
+            <span className="mono text-xs text-ink-2">{p.tool}</span>
           </li>
         );
       })}
@@ -105,10 +105,10 @@ function LogConsole({ logs }: { logs: ScanLogLine[] }) {
   }, [logs.length]);
   return (
     <div ref={ref} className="scroll-quiet max-h-80 overflow-y-auto rounded-lg bg-chrome p-4 text-chrome-ink" role="log" aria-live="polite" aria-label="Dziennik skanowania">
-      {logs.length === 0 ? <p className="text-[0.8125rem] text-chrome-ink-2">Brak wpisów.</p> : null}
+      {logs.length === 0 ? <p className="text-sm text-chrome-ink-2">Brak wpisów.</p> : null}
       <ol className="grid gap-1">
         {logs.map((l, i) => (
-          <li key={i} className="mono grid grid-cols-[4.5rem_1fr] gap-3 text-[0.8125rem] leading-relaxed">
+          <li key={i} className="mono grid grid-cols-[4.5rem_1fr] gap-3 text-sm leading-relaxed">
             <span className="text-chrome-ink-2">{fmtTime(l.at)}</span>
             <span className={cn(l.level === "warn" && "text-[#f7c35f]", l.level === "error" && "text-[#ff8a8f]")}>{l.message}</span>
           </li>
@@ -169,7 +169,7 @@ function EditScanForm({ scan, onOpenChange }: { scan: ScanRun; onOpenChange: (o:
 function Stat({ label, value, hint }: { label: string; value: React.ReactNode; hint?: React.ReactNode }) {
   return (
     <div className="grid gap-0.5">
-      <span className="text-[0.8125rem] text-ink-2">{label}</span>
+      <span className="text-sm text-ink-2">{label}</span>
       <span className="tabular text-xl font-extrabold">{value}</span>
       {hint ? <span className="text-xs text-ink-2">{hint}</span> : null}
     </div>

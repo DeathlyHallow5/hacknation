@@ -144,7 +144,7 @@ export function NewScanView() {
                   </Button>
                 </div>
               }
-              bodyClassName="p-0"
+              flush
             >
               <div className="border-b border-line px-5 py-3">
                 <SearchInput value={filter} onChange={setFilter} placeholder="Filtruj cele…" className="w-full sm:w-72" />
@@ -294,7 +294,7 @@ export function NewScanView() {
                         </li>
                       ))}
                     </ul>
-                    <p className="text-[0.8125rem] text-ink-3">W trybie demonstracyjnym przebieg jest przyspieszony i trwa około minuty.</p>
+                    <p className="text-sm text-ink-3">W trybie demonstracyjnym przebieg jest przyspieszony i trwa około minuty.</p>
                   </div>
                 ) : (
                   <Skeleton className="h-24" />

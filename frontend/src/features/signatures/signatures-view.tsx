@@ -37,7 +37,7 @@ function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
           <DialogDescription>Plik YAML lub JSON z listą sygnatur. Każda reguła przechodzi kontrolę bezpieczeństwa — niebezpieczne zostaną odrzucone.</DialogDescription>
         </DialogHeader>
         <input type="file" accept=".yaml,.yml,.json" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-sm" />
-        <a href="/samples/signatures.yaml" download className="text-[0.8125rem] font-semibold text-link hover:underline">
+        <a href="/samples/signatures.yaml" download className="text-sm font-semibold text-link hover:underline">
           Pobierz przykładowy plik sygnatury.yaml
         </a>
         <DialogFooter>
@@ -121,7 +121,7 @@ export function SignaturesView() {
         </span>
       ),
     },
-    { key: "cat", header: "Kategoria", hideBelow: "md", cell: (s) => <span className="text-[0.8125rem]">{categoryLabel(s.category)}</span> },
+    { key: "cat", header: "Kategoria", hideBelow: "md", cell: (s) => <span className="text-sm">{categoryLabel(s.category)}</span> },
     { key: "source", header: "Źródło", hideBelow: "md", cell: (s) => (s.source === "builtin" ? <Chip tone="outline">wbudowana</Chip> : <Chip tone="accent">własna — {s.author}</Chip>) },
     { key: "matches", header: "Dopasowania", className: "tabular text-right", headerClassName: "text-right", cell: (s) => fmtNumber(s.matches_last_scan) },
     { key: "updated", header: "Zmiana", hideBelow: "xl", cell: (s) => <span className="text-xs text-ink-2">{fmtRelative(s.updated_at)}</span> },
@@ -174,22 +174,22 @@ export function SignaturesView() {
           <Fingerprint className="mt-0.5 size-5 text-link" aria-hidden />
           <div className="grid gap-0.5">
             <span className="tabular text-2xl font-extrabold">{all.length}</span>
-            <span className="text-[0.8125rem] text-ink-2">sygnatur, w tym {all.filter((s) => s.source === "custom").length} własnych</span>
+            <span className="text-sm text-ink-2">sygnatur, w tym {all.filter((s) => s.source === "custom").length} własnych</span>
           </div>
         </div>
         <div className="flex items-start gap-3 rounded-xl border border-line bg-surface p-4">
           <ShieldCheck className="mt-0.5 size-5 text-success" aria-hidden />
-          <div className="grid gap-0.5 text-[0.8125rem]">
+          <div className="grid gap-0.5 text-sm">
             <span className="font-bold text-ink">Bezpieczne z założenia</span>
             <span className="text-ink-2">Ścieżki tylko GET/HEAD, bez parametrów, logowania i znaków typowych dla ataków.</span>
           </div>
         </div>
-        <div className="grid gap-0.5 rounded-xl border border-line bg-surface p-4 text-[0.8125rem]">
+        <div className="grid gap-0.5 rounded-xl border border-line bg-surface p-4 text-sm">
           <span className="font-bold">Typy warunków</span>
           <span className="text-ink-2">Nagłówek, ciasteczko, hash favicony, fragment HTML, ścieżka, tytuł, wersja w treści, kod odpowiedzi.</span>
         </div>
       </div>
-      <Panel bodyClassName="p-0">
+      <Panel flush>
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
           <SearchInput value={q} onChange={setQ} placeholder="Szukaj sygnatury…" className="w-full sm:w-80" />
           <Segmented

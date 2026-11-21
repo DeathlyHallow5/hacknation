@@ -29,6 +29,14 @@ export const CHANGE_LABEL_PLURAL: Record<Exclude<ChangeState, "unchanged">, stri
   unstable: "Niestabilne",
 };
 
+/** Forms for "number + adjective" via countLabel: 1 nowy, 34 nowe, 19 zmienionych, 7 zniknęło. */
+export const CHANGE_COUNT_FORMS: Record<Exclude<ChangeState, "unchanged">, [string, string, string]> = {
+  new: ["nowy", "nowe", "nowych"],
+  changed: ["zmieniony", "zmienione", "zmienionych"],
+  gone: ["zniknął", "zniknęły", "zniknęło"],
+  unstable: ["niestabilny", "niestabilne", "niestabilnych"],
+};
+
 export const AVAILABILITY_LABEL: Record<Availability, string> = {
   active: "Aktywny",
   unstable: "Niestabilny",
@@ -78,13 +86,14 @@ export const SCAN_STATUS_LABEL: Record<ScanStatus, string> = {
   failed: "Błąd",
 };
 
-export const SCAN_PHASES: { key: ScanPhase; label: string; tool: string }[] = [
-  { key: "preflight", label: "Pre-flight", tool: "odsiew martwych adresów" },
-  { key: "discovery", label: "Wykrywanie hostów", tool: "nmap -sn / naabu" },
-  { key: "services", label: "Porty i usługi", tool: "nmap -sV" },
-  { key: "http", label: "HTTP/HTTPS", tool: "httpx, tlsx" },
-  { key: "signatures", label: "Sygnatury", tool: "reguły detekcji" },
-  { key: "diff", label: "Porównanie", tool: "silnik zmian" },
+/** `command`: the tool is a real command line (shown in mono); otherwise it is a plain Polish description. */
+export const SCAN_PHASES: { key: ScanPhase; label: string; tool: string; command: boolean }[] = [
+  { key: "preflight", label: "Kontrola wstępna", tool: "odsiew martwych adresów", command: false },
+  { key: "discovery", label: "Wykrywanie hostów", tool: "nmap -sn / naabu", command: true },
+  { key: "services", label: "Porty i usługi", tool: "nmap -sV", command: true },
+  { key: "http", label: "HTTP/HTTPS", tool: "httpx, tlsx", command: true },
+  { key: "signatures", label: "Sygnatury", tool: "reguły detekcji", command: false },
+  { key: "diff", label: "Porównanie", tool: "silnik zmian", command: false },
 ];
 
 export const DEVICE_LABEL: Record<DeviceType, string> = {

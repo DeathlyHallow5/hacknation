@@ -13,7 +13,7 @@ function Footer() {
   const { data: meta } = useMeta();
   return (
     <footer className="mt-auto border-t border-line bg-surface">
-      <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-4 text-[0.8125rem] text-ink-2 sm:px-6 lg:px-8">
+      <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-4 text-sm text-ink-2 sm:px-6 lg:px-8">
         <span>© 2026 Centrum Bezpieczeństwa Informacji AGH</span>
         <Link href="/dostepnosc" className="font-semibold text-link hover:underline">
           Deklaracja dostępności

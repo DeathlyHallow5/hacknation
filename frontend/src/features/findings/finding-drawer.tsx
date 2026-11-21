@@ -39,7 +39,7 @@ export function EvidenceList({ items }: { items: Evidence[] }) {
       {items.map((e, i) => (
         <li key={i} className="rounded-lg border border-line bg-surface-2 p-3">
           <div className="mb-1.5 text-xs font-semibold text-ink-2">{e.label}</div>
-          <code className="mono block text-[0.8125rem] leading-relaxed break-all whitespace-pre-wrap text-ink">
+          <code className="mono block text-sm leading-relaxed break-all whitespace-pre-wrap text-ink">
             <Highlighted text={e.snippet} highlight={e.highlight} />
           </code>
         </li>
@@ -201,7 +201,7 @@ export function FindingDrawer({ id, onOpenChange }: { id: string | null; onOpenC
                 <h3 className="text-sm font-bold">Dowody</h3>
                 <EvidenceList items={f.evidence} />
                 {f.signature_name ? (
-                  <p className="text-[0.8125rem] text-ink-2">
+                  <p className="text-sm text-ink-2">
                     Dopasowana sygnatura: <span className="font-semibold text-ink">{f.signature_name}</span>
                   </p>
                 ) : null}
@@ -240,7 +240,7 @@ export function FindingDrawer({ id, onOpenChange }: { id: string | null; onOpenC
               </section>
 
               {f.defectdojo ? (
-                <p className="rounded-lg bg-surface-2 px-3 py-2.5 text-[0.8125rem]">
+                <p className="rounded-lg bg-surface-2 px-3 py-2.5 text-sm">
                   Wysłano do DefectDojo {fmtSmart(f.defectdojo.exported_at)} jako finding #{f.defectdojo.finding_id}.{" "}
                   <a href={f.defectdojo.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-link hover:underline">
                     Otwórz <ExternalLink className="size-3.5" aria-hidden />

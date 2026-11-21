@@ -62,7 +62,7 @@ function EncryptionPanel() {
           </div>
           <div className="overflow-hidden rounded-xl border border-line">
             <table className="w-full text-sm">
-              <thead className="bg-surface-2 text-left text-[0.8125rem] text-ink-2">
+              <thead className="bg-surface-2 text-left text-sm text-ink-2">
                 <tr>
                   <th className="px-3 py-2 font-semibold">Tabela i kolumna</th>
                   <th className="px-3 py-2 font-semibold">Zawartość</th>
@@ -71,7 +71,7 @@ function EncryptionPanel() {
               <tbody>
                 {e.encrypted_fields.map((f) => (
                   <tr key={`${f.table}.${f.column}`} className="border-t border-line">
-                    <td className="mono px-3 py-1.5 text-[0.8125rem]">
+                    <td className="mono px-3 py-1.5 text-sm">
                       {f.table}.{f.column}
                     </td>
                     <td className="px-3 py-1.5">{f.description}</td>
@@ -165,13 +165,13 @@ function SettingsForm({ data }: { data: Settings }) {
                   <Slider aria-label="Żądania HTTP na host" disabled={!editable} min={1} max={50} step={1} value={[s.scan_safety.max_http_requests_per_host]} onValueChange={([v]) => setS({ ...s, scan_safety: { ...s.scan_safety, max_http_requests_per_host: v } })} />
                 </Field>
                 <Field label="Porty dozwolone do testów" htmlFor="ports" hint="Lista z wytycznych laboratorium; używana przez profil „Porty dozwolone”.">
-                  <Textarea id="ports" disabled={!editable} className="mono min-h-20 text-[0.8125rem]" value={s.scan_safety.allowed_ports} onChange={(e) => setS({ ...s, scan_safety: { ...s.scan_safety, allowed_ports: e.target.value } })} />
+                  <Textarea id="ports" disabled={!editable} className="mono min-h-20 text-sm" value={s.scan_safety.allowed_ports} onChange={(e) => setS({ ...s, scan_safety: { ...s.scan_safety, allowed_ports: e.target.value } })} />
                 </Field>
                 <Field label="Zakresy wykluczone (nigdy nie skanowane)" error={badCidrs.length ? `Niepoprawne zakresy: ${badCidrs.join(", ")}` : errors.excluded_cidrs}>
                   <TagInput value={s.scan_safety.excluded_cidrs} onChange={(v) => setS({ ...s, scan_safety: { ...s.scan_safety, excluded_cidrs: v.map((x) => x.replace(/^#/, "")) } })} placeholder="np. 10.0.250.0/24 i Enter" />
                 </Field>
                 <Field label="Identyfikacja skanera (User-Agent)" htmlFor="ua" hint="Administratorzy sieci od razu wiedzą, kto skanuje i gdzie zgłosić uwagi.">
-                  <Input id="ua" disabled={!editable} className="mono text-[0.8125rem]" value={s.scan_safety.user_agent} onChange={(e) => setS({ ...s, scan_safety: { ...s.scan_safety, user_agent: e.target.value } })} />
+                  <Input id="ua" disabled={!editable} className="mono text-sm" value={s.scan_safety.user_agent} onChange={(e) => setS({ ...s, scan_safety: { ...s.scan_safety, user_agent: e.target.value } })} />
                 </Field>
               </div>
             </Panel>

@@ -49,7 +49,7 @@ export function AuditView() {
         title="Dziennik zdarzeń"
         description="Każda zmiana danych, eksport, logowanie i działanie skanera — kto, co i kiedy. Wpisy są tylko do odczytu."
       />
-      <Panel bodyClassName="p-0">
+      <Panel flush>
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
           <SearchInput value={q} onChange={(v) => { setQ(v); setPage(1); }} placeholder="Szukaj w opisie, zasobie, osobie…" className="w-full sm:w-80" />
           <SimpleSelect aria-label="Osoba" className="w-52" value={actor} onChange={(v) => { setActor(v); setPage(1); }} allLabel="Każda osoba" options={[{ value: "system", label: "System / harmonogram" }, ...(users.data ?? []).map((u) => ({ value: u.id, label: u.name }))]} />

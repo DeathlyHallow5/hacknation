@@ -79,12 +79,12 @@ function AddTargetsForm({ onOpenChange }: { onOpenChange: (o: boolean) => void }
         </DialogHeader>
         <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
           <div className="grid content-start gap-4">
-            <Field label="Cele" htmlFor="targets-text" aside={<button type="button" className="text-[0.8125rem] font-semibold text-link hover:underline" onClick={() => setText(EXAMPLE)}>Wstaw przykład</button>}>
+            <Field label="Cele" htmlFor="targets-text" aside={<button type="button" className="text-sm font-semibold text-link hover:underline" onClick={() => setText(EXAMPLE)}>Wstaw przykład</button>}>
               <Textarea
                 id="targets-text"
                 value={text}
                 onChange={(e) => setText(e.target.value)}
-                className="mono min-h-48 text-[0.8125rem]"
+                className="mono min-h-48 text-sm"
                 placeholder={"10.0.0.0/24\n10.0.5.17\nportal.uczelnia.example"}
                 spellCheck={false}
               />
@@ -112,7 +112,7 @@ function AddTargetsForm({ onOpenChange }: { onOpenChange: (o: boolean) => void }
           <div className="grid content-start gap-3">
             <div className="flex items-center justify-between">
               <span className="text-sm font-bold">Podgląd ({entries.length})</span>
-              <span className="text-[0.8125rem] text-ink-2">
+              <span className="text-sm text-ink-2">
                 {valid.length} poprawnych, {invalid.length} błędnych, {fmtNumber(addresses)} adresów
               </span>
             </div>

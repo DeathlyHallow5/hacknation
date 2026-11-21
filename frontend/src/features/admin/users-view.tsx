@@ -123,7 +123,7 @@ export function UsersView() {
         can("users:manage") && u.id !== session.user.id ? (
           <SimpleSelect
             aria-label={`Rola: ${u.name}`}
-            className="h-8 w-48 text-[0.8125rem]"
+            className="h-8 w-48 text-sm"
             value={u.role_id}
             onChange={(v) => v && v !== u.role_id && update(u, { role_id: v }, `Zmieniono rolę na ${roles.data?.find((r) => r.id === v)?.name}`)}
             options={(roles.data ?? []).map((r) => ({ value: r.id, label: r.name }))}
@@ -132,7 +132,7 @@ export function UsersView() {
           <Chip tone="outline">{u.role_name}</Chip>
         ),
     },
-    { key: "login", header: "Ostatnie logowanie", hideBelow: "md", cell: (u) => <span className="text-[0.8125rem] text-ink-2">{u.last_login_at ? fmtRelative(u.last_login_at) : "nigdy"}</span> },
+    { key: "login", header: "Ostatnie logowanie", hideBelow: "md", cell: (u) => <span className="text-sm text-ink-2">{u.last_login_at ? fmtRelative(u.last_login_at) : "nigdy"}</span> },
     {
       key: "active",
       header: "Konto aktywne",
@@ -174,7 +174,7 @@ export function UsersView() {
           </Guard>
         }
       />
-      <Panel bodyClassName="p-0">
+      <Panel flush>
         {users.isError ? <ErrorState className="m-4" error={users.error} onRetry={() => users.refetch()} /> : null}
         <DataTable columns={columns} rows={users.data} getId={(u) => u.id} loading={users.isFetching && !users.data} rowClassName={(u) => (!u.active ? "opacity-60" : undefined)} caption="Użytkownicy" />
       </Panel>

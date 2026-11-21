@@ -17,7 +17,7 @@ export function Kbd({ className, ...props }: React.HTMLAttributes<HTMLElement>) 
   return (
     <kbd
       className={cn(
-        "inline-flex h-5 min-w-5 items-center justify-center rounded border border-current/25 px-1 font-sans text-[0.6875rem] font-semibold opacity-80",
+        "inline-flex h-5 min-w-5 items-center justify-center rounded border border-current/25 px-1 font-sans text-xs font-semibold opacity-80",
         className,
       )}
       {...props}
@@ -25,7 +25,7 @@ export function Kbd({ className, ...props }: React.HTMLAttributes<HTMLElement>) 
   );
 }
 
-/** Neutral chip used for tags, technologies and counts. */
+/** Chip: only for a status (always with an icon) or an active filter token. Counts, tags and technologies are plain text. */
 export function Chip({
   className,
   tone = "neutral",
@@ -84,7 +84,7 @@ export function Progress({
 export const Tabs = TabsPrimitive.Root;
 
 export function TabsList({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.List>) {
-  return <TabsPrimitive.List className={cn("flex gap-1 overflow-x-auto border-b border-line", className)} {...props} />;
+  return <TabsPrimitive.List className={cn("relative flex gap-1 overflow-x-auto border-b border-line", className)} {...props} />;
 }
 
 export function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
@@ -103,7 +103,12 @@ export function TabsContent({ className, ...props }: React.ComponentProps<typeof
   return <TabsPrimitive.Content className={cn("pt-5 outline-none", className)} {...props} />;
 }
 
-/** Section container on the light workspace. */
+/**
+ * Section container on the light workspace. One frame per block: inside, use rows with
+ * `divide-y` and spacing, never another bordered card.
+ * `flush`: the body starts with a table or a list, so it touches the edges and the header gets a rule.
+ * `description`: only a rule or fact the title and data don't already say; one short line.
+ */
 export function Panel({
   title,
   description,
@@ -111,6 +116,7 @@ export function Panel({
   children,
   className,
   bodyClassName,
+  flush,
   id,
 }: {
   title?: React.ReactNode;
@@ -119,29 +125,31 @@ export function Panel({
   children: React.ReactNode;
   className?: string;
   bodyClassName?: string;
+  flush?: boolean;
   id?: string;
 }) {
+  const header = Boolean(title || actions);
   return (
-    <section id={id} className={cn("rounded-xl border border-line bg-surface", className)} aria-labelledby={id && title ? `${id}-title` : undefined}>
-      {title || actions ? (
-        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
-          <div className="grid min-w-0 gap-0.5">
+    <section id={id} className={cn("min-w-0 rounded-xl border border-line bg-surface", className)} aria-labelledby={id && title ? `${id}-title` : undefined}>
+      {header ? (
+        <header className={cn("flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5", flush ? "border-b border-line py-3" : "pt-4")}>
+          <div className="flex min-h-8 min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
             {title ? (
-              <h2 id={id ? `${id}-title` : undefined} className="text-base font-bold tracking-tight text-ink">
+              <h2 id={id ? `${id}-title` : undefined} className="text-base font-semibold text-ink">
                 {title}
               </h2>
             ) : null}
-            {description ? <p className="text-[0.8125rem] text-ink-2">{description}</p> : null}
+            {description ? <p className="text-xs text-ink-2">{description}</p> : null}
           </div>
           {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
         </header>
       ) : null}
-      <div className={cn("p-5", bodyClassName)}>{children}</div>
+      <div className={cn(flush ? undefined : header ? "px-5 pt-3 pb-5" : "p-5", bodyClassName)}>{children}</div>
     </section>
   );
 }
 
-/** Label/value rows for detail panels. */
+/** Label/value rows for detail panels and read-only views. */
 export function DefinitionList({ items, className }: { items: { label: React.ReactNode; value: React.ReactNode }[]; className?: string }) {
   return (
     <dl className={cn("grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-2.5 text-sm", className)}>
