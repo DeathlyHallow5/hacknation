@@ -9,6 +9,7 @@
 set -euo pipefail
 API=${API:-http://127.0.0.1:8000/api}
 cd "$(dirname "$0")/.."
+. scripts/_auth.sh
 
 dc() { docker compose "$@" >/dev/null 2>&1; }
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }

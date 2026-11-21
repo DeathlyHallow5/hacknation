@@ -28,6 +28,10 @@ services:
       DATABASE_URL: postgres://asi:${POSTGRES_PASSWORD:-asi-dev-password}@db:5432/asi
       ASI_DATA_KEY: ${ASI_DATA_KEY:?set ASI_DATA_KEY in .env (see .env.example)}
       ASI_MAX_CONCURRENCY: ${ASI_MAX_CONCURRENCY:-256}
+      ASI_ADMIN_USER: ${ASI_ADMIN_USER:-admin}
+      ASI_ADMIN_PASSWORD: ${ASI_ADMIN_PASSWORD:-}
+      ASI_SESSION_TTL_HOURS: ${ASI_SESSION_TTL_HOURS:-12}
+      ASI_COOKIE_SECURE: ${ASI_COOKIE_SECURE:-false}
       DEFECTDOJO_URL: ${DEFECTDOJO_URL:-}
       DEFECTDOJO_TOKEN: ${DEFECTDOJO_TOKEN:-}
     depends_on:
