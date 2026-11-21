@@ -20,6 +20,17 @@ import { useQueryClient } from "@tanstack/react-query";
 const EXAMPLE = "10.0.32.0/22\nportal.wydzial.uczelnia.example\n10.0.40.66\n300.1.1.1";
 
 export function AddTargetsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="xl">
+        <AddTargetsForm onOpenChange={onOpenChange} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Inside DialogContent: unmounted on close, so every opening starts empty. */
+function AddTargetsForm({ onOpenChange }: { onOpenChange: (o: boolean) => void }) {
   const qc = useQueryClient();
   const [text, setText] = React.useState("");
   const [name, setName] = React.useState("");
@@ -40,16 +51,6 @@ export function AddTargetsDialog({ open, onOpenChange }: { open: boolean; onOpen
   const invalid = rows.filter((r) => !r.ok);
   const addresses = valid.reduce((n, r) => n + (r.address_count ?? 0), 0);
 
-  React.useEffect(() => {
-    if (!open) {
-      setText("");
-      setName("");
-      setOwner("");
-      setTags([]);
-      setCriticality("medium");
-    }
-  }, [open]);
-
   const submit = async () => {
     setPending(true);
     try {
@@ -69,8 +70,7 @@ export function AddTargetsDialog({ open, onOpenChange }: { open: boolean; onOpen
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="xl">
+    <>
         <DialogHeader>
           <DialogTitle>Dodaj cele ręcznie</DialogTitle>
           <DialogDescription>
@@ -152,7 +152,6 @@ export function AddTargetsDialog({ open, onOpenChange }: { open: boolean; onOpen
             Dodaj {valid.length ? countLabel(valid.length, ["cel", "cele", "celów"]) : "cele"}
           </Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </>
   );
 }

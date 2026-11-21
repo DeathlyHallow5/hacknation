@@ -78,6 +78,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               : `${errorMessage(session.error)}. Sprawdź, czy backend działa, i odśwież stronę.`}
           </p>
           <div className="flex gap-2">
+            {/* eslint-disable-next-line @next/next/no-location-assign-relative-destination */}
             <Button variant="primary" onClick={() => (window.location.href = "/login")}>
               Przejdź do logowania
             </Button>

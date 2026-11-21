@@ -25,7 +25,18 @@ export interface ImportWizardProps {
 }
 
 /** Drag & drop CSV/JSON import with server-side validation preview. */
-export function ImportWizard({ open, onOpenChange, title, description, samples, formatHint, preview, commit, conflictOption }: ImportWizardProps) {
+export function ImportWizard(props: ImportWizardProps) {
+  return (
+    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      <DialogContent size="xl">
+        <ImportBody {...props} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Mounted only while the dialog is open, so its state starts fresh every time. */
+function ImportBody({ onOpenChange, title, description, samples, formatHint, preview, commit, conflictOption }: ImportWizardProps) {
   const [file, setFile] = React.useState<File | null>(null);
   const [drag, setDrag] = React.useState(false);
   const [report, setReport] = React.useState<ImportReport | null>(null);
@@ -34,32 +45,19 @@ export function ImportWizard({ open, onOpenChange, title, description, samples, 
   const [onConflict, setOnConflict] = React.useState<"skip" | "update">("skip");
   const inputRef = React.useRef<HTMLInputElement>(null);
 
-  React.useEffect(() => {
-    if (!open) {
-      setFile(null);
-      setReport(null);
-      setError(null);
-      setBusy(null);
-    }
-  }, [open]);
-
-  const makeForm = (dryRun: boolean, f: File) => {
+  const makeForm = (dryRun: boolean, f: File, policy = onConflict) => {
     const fd = new FormData();
     fd.set("file", f);
     fd.set("dry_run", String(dryRun));
-    fd.set("on_conflict", onConflict);
+    fd.set("on_conflict", policy);
     return fd;
   };
 
-  const pick = async (f: File | undefined | null) => {
-    if (!f) return;
-    setFile(f);
-    setReport(null);
-    setError(null);
+  const runPreview = async (f: File, policy = onConflict) => {
     if (!preview) return;
     setBusy("preview");
     try {
-      setReport(await preview(makeForm(true, f)));
+      setReport(await preview(makeForm(true, f, policy)));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -67,11 +65,18 @@ export function ImportWizard({ open, onOpenChange, title, description, samples, 
     }
   };
 
-  React.useEffect(() => {
-    if (file && preview && open) void pick(file);
-    // re-run preview when the conflict policy changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onConflict]);
+  const pick = async (f: File | undefined | null) => {
+    if (!f) return;
+    setFile(f);
+    setReport(null);
+    setError(null);
+    await runPreview(f);
+  };
+
+  const changePolicy = (policy: "skip" | "update") => {
+    setOnConflict(policy);
+    if (file) void runPreview(file, policy);
+  };
 
   const doCommit = async () => {
     if (!file) return;
@@ -89,8 +94,7 @@ export function ImportWizard({ open, onOpenChange, title, description, samples, 
   const isJson = file?.name.toLowerCase().endsWith(".json");
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="xl">
+    <>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -154,7 +158,7 @@ export function ImportWizard({ open, onOpenChange, title, description, samples, 
                 size="sm"
                 aria-label="Postępowanie z duplikatami"
                 value={onConflict}
-                onChange={setOnConflict}
+                onChange={changePolicy}
                 options={[
                   { value: "skip", label: "Pomiń" },
                   { value: "update", label: "Zaktualizuj" },
@@ -221,7 +225,6 @@ export function ImportWizard({ open, onOpenChange, title, description, samples, 
             {busy === "commit" ? <Spinner /> : <FileUp />} Importuj
           </Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </>
   );
 }

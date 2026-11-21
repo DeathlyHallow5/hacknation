@@ -29,6 +29,8 @@ function redirectToLogin() {
   if (typeof window === "undefined") return;
   if (window.location.pathname.startsWith("/login")) return;
   const next = encodeURIComponent(window.location.pathname + window.location.search);
+  // Full reload on purpose: drop every cached query of the expired session.
+  // eslint-disable-next-line @next/next/no-location-assign-relative-destination
   window.location.href = `/login?next=${next}`;
 }
 

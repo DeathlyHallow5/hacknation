@@ -67,7 +67,6 @@ export function HilbertMap({ cidr, size = 360, className }: { cidr: string; size
 
   const statuses = React.useMemo(() => (data ? decode(data.data, data.size) : null), [data]);
   const n = data ? Math.round(Math.sqrt(data.size)) : 256;
-  const cellPx = size / n;
   const blockSide = Math.max(1, Math.round(Math.sqrt(256))); // a /24 is 16x16 cells
 
   React.useEffect(() => {
