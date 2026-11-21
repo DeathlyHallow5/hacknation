@@ -82,7 +82,7 @@ function EditHostForm({ host, onOpenChange }: { host: Host; onOpenChange: (o: bo
               <SimpleSelect aria-label="Typ urządzenia" value={device} onChange={(v) => setDevice((v || "unknown") as DeviceType)} options={(Object.keys(DEVICE_LABEL) as DeviceType[]).map((d) => ({ value: d, label: DEVICE_LABEL[d] }))} />
             </Field>
             <Field label="Nazwy hosta" htmlFor="h-names" hint="Po jednej w wierszu.">
-              <Textarea id="h-names" className="mono min-h-20 text-[0.8125rem]" value={hostnames} onChange={(e) => setHostnames(e.target.value)} />
+              <Textarea id="h-names" className="mono min-h-20 text-sm" value={hostnames} onChange={(e) => setHostnames(e.target.value)} />
             </Field>
             <Field label="Tagi" htmlFor="h-tags">
               <TagInput id="h-tags" value={tags} onChange={setTags} />
@@ -274,7 +274,7 @@ export function HostView({ id }: { id: string }) {
             )}
           </Panel>
           {can("findings:read") ? (
-            <Panel title={`Znaleziska (${findings.data?.total ?? "…"})`} bodyClassName="p-0">
+            <Panel title={`Znaleziska (${findings.data?.total ?? "…"})`} flush>
               <ul className="divide-y divide-line">
                 {(findings.data?.items ?? []).map((f) => (
                   <li key={f.id}>

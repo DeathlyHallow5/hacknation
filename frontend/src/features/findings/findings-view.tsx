@@ -50,7 +50,7 @@ function DefectDojoDialog({ ids, onDone }: { ids: string[] | null; onDone: (sent
             { value: "evidence", title: "Evidence do analizy", description: "Załącznik do istniejącego findingu — do dalszej analizy ręcznej." },
           ]}
         />
-        <div className="rounded-lg bg-surface-2 p-3 text-[0.8125rem] text-ink-2">
+        <div className="rounded-lg bg-surface-2 p-3 text-sm text-ink-2">
           Mapowanie pól: tytuł → <span className="mono text-ink">title</span>, priorytet → <span className="mono text-ink">severity: Info</span> + tag priorytetu, adres i port →{" "}
           <span className="mono text-ink">endpoints</span>, dowody → <span className="mono text-ink">description</span>.
         </div>
@@ -143,14 +143,14 @@ export function FindingsView() {
           ) : null
         }
       />
-      <Panel bodyClassName="p-0">
+      <Panel flush>
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
           <SearchInput value={q} onChange={(v) => { setQ(v); resetPage(); }} placeholder="Tytuł, IP, domena, technologia, tag…" className="w-full sm:w-80" />
           <SimpleSelect aria-label="Kategoria" className="w-56" value={category} onChange={(v) => { setCategory(v as FindingCategory | ""); resetPage(); }} allLabel="Wszystkie kategorie" options={(Object.keys(FINDING_CATEGORY_LABEL) as FindingCategory[]).map((c) => ({ value: c, label: FINDING_CATEGORY_LABEL[c] }))} />
           <SimpleSelect aria-label="Status zmiany" className="w-44" value={change} onChange={(v) => { setChange(v as ChangeState | ""); resetPage(); }} allLabel="Każda zmiana" options={(["new", "changed", "unstable", "gone", "unchanged"] as ChangeState[]).map((c) => ({ value: c, label: CHANGE_LABEL[c] }))} />
           <SimpleSelect aria-label="Status obsługi" className="w-48" value={status} onChange={(v) => { setStatus(v as FindingStatus | ""); resetPage(); }} allLabel="Każdy status obsługi" options={(Object.keys(FINDING_STATUS_LABEL) as FindingStatus[]).map((s) => ({ value: s, label: FINDING_STATUS_LABEL[s] }))} />
           <SimpleSelect aria-label="Minimalny priorytet" className="w-48" value={minScore} onChange={(v) => { setMinScore(v); resetPage(); }} allLabel="Każdy priorytet" options={SCORE_OPTIONS} />
-          <span className="ml-auto text-[0.8125rem] text-ink-2">{query.data ? `${fmtNumber(query.data.total)} znalezisk` : ""}</span>
+          <span className="ml-auto text-sm text-ink-2">{query.data ? `${fmtNumber(query.data.total)} znalezisk` : ""}</span>
         </div>
         {selected.length ? (
           <div className="flex flex-wrap items-center gap-2 border-b border-line bg-accent/[0.06] px-5 py-2.5 text-sm">

@@ -51,11 +51,11 @@ export function Field({
       </div>
       {children}
       {error ? (
-        <p className="text-[0.8125rem] font-medium text-danger" role="alert">
+        <p className="text-sm font-medium text-danger" role="alert">
           {error}
         </p>
       ) : hint ? (
-        <p className="text-[0.8125rem] text-ink-2">{hint}</p>
+        <p className="text-sm text-ink-2">{hint}</p>
       ) : null}
     </div>
   );
@@ -96,6 +96,43 @@ export function Switch({ className, ...props }: React.ComponentProps<typeof Swit
   );
 }
 
+/**
+ * A setting as a plain row: label (plus an optional line of help) and a switch on the right.
+ * No frame around it; the label stays clickable and the help is announced as the description.
+ */
+export function SwitchRow({
+  label,
+  description,
+  checked,
+  onCheckedChange,
+  disabled,
+  className,
+}: {
+  label: React.ReactNode;
+  description?: React.ReactNode;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const id = React.useId();
+  return (
+    <div className={cn("flex justify-between gap-4 py-2", description ? "items-start" : "items-center", className)}>
+      <div className="grid gap-0.5">
+        <label htmlFor={id} className={cn("text-sm font-semibold text-ink", disabled ? "cursor-not-allowed" : "cursor-pointer")}>
+          {label}
+        </label>
+        {description ? (
+          <p id={`${id}-desc`} className="text-sm text-ink-2">
+            {description}
+          </p>
+        ) : null}
+      </div>
+      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} aria-describedby={description ? `${id}-desc` : undefined} />
+    </div>
+  );
+}
+
 export function Slider({ className, ...props }: React.ComponentProps<typeof SliderPrimitive.Root>) {
   const count = (props.value ?? props.defaultValue ?? [0]).length;
   return (
@@ -107,7 +144,7 @@ export function Slider({ className, ...props }: React.ComponentProps<typeof Slid
         <SliderPrimitive.Thumb
           key={i}
           aria-label={props["aria-label"]}
-          className="block size-5 rounded-full border-2 border-accent bg-surface shadow-sm transition-transform hover:scale-110 focus-visible:outline-3 focus-visible:outline-focus"
+          className="block size-5 rounded-full border-2 border-accent bg-surface shadow-sm transition-shadow hover:ring-4 hover:ring-accent/20 focus-visible:outline-3 focus-visible:outline-focus"
         />
       ))}
     </SliderPrimitive.Root>
@@ -146,12 +183,12 @@ export function RadioCards<T extends string>({
           key={o.value}
           value={o.value}
           disabled={o.disabled}
-          className="group relative flex gap-3 rounded-xl border border-line-strong bg-surface p-4 text-left transition-colors hover:border-ink-3 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-accent data-[state=checked]:bg-accent/[0.06] data-[state=checked]:ring-1 data-[state=checked]:ring-accent contrast:data-[state=checked]:bg-transparent"
+          className="group relative flex gap-3 rounded-lg border border-line-strong bg-surface p-4 text-left transition-colors hover:border-ink-3 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-accent data-[state=checked]:bg-accent/[0.06] data-[state=checked]:ring-1 data-[state=checked]:ring-accent contrast:data-[state=checked]:bg-transparent"
         >
           {o.icon ? <span className="mt-0.5 text-ink-2 group-data-[state=checked]:text-link [&_svg]:size-5">{o.icon}</span> : null}
           <span className="grid gap-1">
             <span className="text-sm font-semibold text-ink">{o.title}</span>
-            {o.description ? <span className="text-[0.8125rem] leading-snug text-ink-2">{o.description}</span> : null}
+            {o.description ? <span className="text-sm leading-snug text-ink-2">{o.description}</span> : null}
           </span>
           <span className="absolute top-3 right-3 grid size-4 place-items-center rounded-full border border-line-strong group-data-[state=checked]:border-accent">
             <RadioGroup.Indicator className="size-2 rounded-full bg-accent" />
@@ -188,8 +225,8 @@ export function Segmented<T extends string>({
           aria-checked={value === o.value}
           onClick={() => onChange(o.value)}
           className={cn(
-            "rounded-md font-semibold text-ink-2 transition-colors hover:text-ink aria-checked:bg-surface aria-checked:text-ink aria-checked:shadow-sm aria-checked:ring-1 aria-checked:ring-line-strong contrast:aria-checked:ring-accent",
-            size === "sm" ? "h-7 px-2.5 text-[0.8125rem]" : "h-8 px-3 text-sm",
+            "rounded-[4px] font-semibold text-ink-2 transition-colors hover:text-ink aria-checked:bg-surface aria-checked:text-ink aria-checked:shadow-sm aria-checked:ring-1 aria-checked:ring-line-strong contrast:aria-checked:ring-accent",
+            size === "sm" ? "h-7 px-2.5 text-sm" : "h-8 px-3 text-sm",
           )}
         >
           {o.label}

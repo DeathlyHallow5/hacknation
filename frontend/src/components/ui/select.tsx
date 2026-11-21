@@ -9,18 +9,20 @@ export const Select = SelectPrimitive.Root;
 export const SelectValue = SelectPrimitive.Value;
 export const SelectGroup = SelectPrimitive.Group;
 
-export function SelectTrigger({ className, children, ...props }: React.ComponentProps<typeof SelectPrimitive.Trigger>) {
+/** `quiet`: an inline editor inside a table row; reads as text until hovered or focused. */
+export function SelectTrigger({ className, children, quiet, ...props }: React.ComponentProps<typeof SelectPrimitive.Trigger> & { quiet?: boolean }) {
   return (
     <SelectPrimitive.Trigger
       className={cn(
         "inline-flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-line-strong bg-surface px-3 text-left text-sm text-ink transition-colors hover:border-ink-3 focus-visible:border-accent focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-60 data-[placeholder]:text-ink-3 [&>span]:truncate",
+        quiet && "-ml-2 border-transparent bg-transparent px-2 hover:border-line-strong focus-visible:border-accent",
         className,
       )}
       {...props}
     >
       {children}
       <SelectPrimitive.Icon asChild>
-        <ChevronDown className="size-4 shrink-0 text-ink-2" />
+        <ChevronDown className={cn("size-4 shrink-0", quiet ? "text-ink-3" : "text-ink-2")} />
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   );
@@ -75,6 +77,7 @@ export function SimpleSelect<T extends string>({
   allLabel,
   "aria-label": ariaLabel,
   disabled,
+  quiet,
 }: {
   value: T | "";
   onChange: (v: T | "") => void;
@@ -84,11 +87,12 @@ export function SimpleSelect<T extends string>({
   allLabel?: string;
   "aria-label"?: string;
   disabled?: boolean;
+  quiet?: boolean;
 }) {
   const ALL = "__all__";
   return (
     <Select value={value || (allLabel ? ALL : undefined)} onValueChange={(v) => onChange(v === ALL ? "" : (v as T))} disabled={disabled}>
-      <SelectTrigger className={className} aria-label={ariaLabel}>
+      <SelectTrigger className={className} aria-label={ariaLabel} quiet={quiet}>
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>

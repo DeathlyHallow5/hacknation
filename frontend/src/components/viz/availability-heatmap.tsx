@@ -76,8 +76,8 @@ export function AvailabilityHeatmap({
     : null;
 
   return (
-    <div className="grid gap-3">
-      <div ref={ref} className="relative">
+    <div className="grid min-w-0 grid-cols-1 gap-3">
+      <div ref={ref} className="relative min-w-0">
         <svg width={width} height={height} className="block" role="img" aria-label={`Odsetek odpowiedzi hostów niestabilnych według dnia tygodnia i godziny. W oknie skanowania średnio ${fmtPercent(winAvg)}, w godzinach pracy ${fmtPercent(dayAvg)}.`}>
           <defs>
             <pattern id="win-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -123,7 +123,7 @@ export function AvailabilityHeatmap({
         </svg>
         <ChartTooltip tip={tip} containerWidth={width} />
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 text-[0.8125rem] text-ink-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-ink-2">
         <span className="inline-flex items-center gap-2">
           0%
           <span className="flex gap-0.5" aria-hidden>

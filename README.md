@@ -342,6 +342,11 @@ UI использует те же права: недоступные кнопк�
 | PATCH | `/schedules/{id}` | `schedules:update` | `Partial<ScheduleInput>` → `Schedule` | |
 | DELETE | `/schedules/{id}` | `schedules:delete` | → 204 | |
 
+**`next_run_at` считает бэкенд** при создании и каждом изменении расписания: время `Europe/Warsaw`, строго после текущего момента. В моке это `nextScheduleRun` из `frontend/src/lib/schedule.ts`; та же функция показывает в форме превью «Najbliższe uruchomienie», так что правила в Rust должны совпадать:
+- `daily` / `weekly` — ближайшее начало окна (`window.start`) в один из дней `days` (ISO: 1 — понедельник … 7 — воскресенье; у `weekly` ровно один день);
+- `cron` — ближайшая минута по выражению из 5 полей `минута час день_месяца месяц день_недели`: `*`, списки, диапазоны, шаг `/n`; 0 и 7 — воскресенье. Если ограничены и день месяца, и день недели, достаточно совпадения любого из них (как в Vixie cron). Имена (`MON`, `JAN`) не поддерживаются;
+- выключенное расписание → `null`; неверный cron или выражение без срабатываний в ближайший год → `422` с `fields.cron`.
+
 ```jsonc
 // POST /scans/estimate
 { "target_ids": ["t-1","t-2","t-3","t-4","t-5"], "profile_id": "p-1", "window": { "start": "22:00", "end": "06:00", "timezone": "Europe/Warsaw" } }

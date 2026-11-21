@@ -24,15 +24,15 @@ export function PageHeader({
 }) {
   return (
     <div className={cn("flex flex-wrap items-end justify-between gap-x-6 gap-y-4 pt-7 pb-6", className)}>
-      <div className="grid min-w-0 max-w-3xl gap-2">
+      <div className="grid min-w-0 max-w-3xl gap-1.5">
         {back ? (
-          <Link href={back.href} className="inline-flex w-fit items-center gap-1 text-[0.8125rem] font-semibold text-link hover:underline">
+          <Link href={back.href} className="inline-flex w-fit items-center gap-1 text-sm font-semibold text-link hover:underline">
             <ChevronLeft className="size-4" aria-hidden /> {back.label}
           </Link>
         ) : null}
-        <h1 className="text-[1.75rem] leading-tight font-extrabold tracking-[-0.02em] text-ink">{title}</h1>
-        {description ? <p className="text-[0.9375rem] leading-relaxed text-ink-2">{description}</p> : null}
-        {meta ? <div className="flex flex-wrap items-center gap-2 pt-1">{meta}</div> : null}
+        <h1 className="text-[1.75rem] leading-tight font-semibold tracking-[-0.015em] text-ink">{title}</h1>
+        {description ? <p className="max-w-[65ch] text-sm leading-relaxed text-pretty text-ink-2">{description}</p> : null}
+        {meta ? <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-1 text-sm text-ink-2">{meta}</div> : null}
       </div>
       {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
     </div>

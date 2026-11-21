@@ -66,7 +66,7 @@ function CriticalityCell({ t }: { t: Target }) {
     <div onClick={(e) => e.stopPropagation()}>
       <SimpleSelect
         aria-label={`Krytyczność ${t.value}`}
-        className="h-8 w-32 text-[0.8125rem]"
+        className="h-8 w-32 text-sm"
         value={t.criticality}
         options={CRIT_OPTIONS}
         onChange={async (v) => {
@@ -146,7 +146,7 @@ function EditTargetForm({ target, onClose }: { target: Target; onClose: () => vo
             <label className="flex items-start justify-between gap-4 rounded-lg border border-line p-3">
               <span className="grid gap-0.5">
                 <span className="text-sm font-semibold">Wyklucz ze skanowania</span>
-                <span className="text-[0.8125rem] text-ink-2">Skaner nigdy nie wyśle ruchu do tych adresów — np. systemy wrażliwe na skanowanie.</span>
+                <span className="text-sm text-ink-2">Skaner nigdy nie wyśle ruchu do tych adresów — np. systemy wrażliwe na skanowanie.</span>
               </span>
               <Switch checked={excluded} onCheckedChange={setExcluded} />
             </label>
@@ -275,7 +275,7 @@ export function TargetsView() {
             <Ban className="size-3" aria-hidden /> Wykluczony
           </Chip>
         ) : (
-          <span className="text-[0.8125rem] text-ink-2">{t.last_scanned_at ? fmtSmart(t.last_scanned_at) : "Jeszcze nie skanowano"}</span>
+          <span className="text-sm text-ink-2">{t.last_scanned_at ? fmtSmart(t.last_scanned_at) : "Jeszcze nie skanowano"}</span>
         ),
     },
     {
@@ -352,7 +352,7 @@ export function TargetsView() {
           </>
         }
       />
-      <Panel bodyClassName="p-0">
+      <Panel flush>
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
           <SearchInput
             value={q}

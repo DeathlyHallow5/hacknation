@@ -125,7 +125,7 @@ export function LoginView() {
                 <h3 id="demo-title" className="text-sm font-bold">
                   Tryb demonstracyjny
                 </h3>
-                <p className="text-[0.8125rem] text-ink-2">Wejdź jako jedna z czterech ról, aby sprawdzić rozgraniczenie uprawnień.</p>
+                <p className="text-sm text-ink-2">Wejdź jako jedna z czterech ról, aby sprawdzić rozgraniczenie uprawnień.</p>
               </div>
               <div className="grid gap-1.5">
                 {DEMO_USERS.map((u) => (
@@ -138,7 +138,7 @@ export function LoginView() {
                   >
                     <span className="grid flex-1 leading-tight">
                       <span className="text-sm font-semibold">{u.role}</span>
-                      <span className="text-[0.8125rem] text-ink-2">
+                      <span className="text-sm text-ink-2">
                         {u.name}, {u.hint.toLowerCase()}
                       </span>
                     </span>
@@ -149,7 +149,7 @@ export function LoginView() {
             </section>
           ) : null}
         </div>
-        <footer className="flex flex-wrap gap-x-5 gap-y-1 px-6 py-5 text-[0.8125rem] text-ink-2">
+        <footer className="flex flex-wrap gap-x-5 gap-y-1 px-6 py-5 text-sm text-ink-2">
           <span>© 2026 Centrum Bezpieczeństwa Informacji AGH</span>
           <Link href="/dostepnosc" className="font-semibold text-link hover:underline">
             Deklaracja dostępności

@@ -19,7 +19,7 @@ function CookieValue({ serviceId, name, masked }: { serviceId: string; name: str
   const [value, setValue] = React.useState<string | null>(null);
   return (
     <span className="flex items-center gap-1.5">
-      <code className="mono max-w-56 truncate text-[0.8125rem]">{value ?? masked}</code>
+      <code className="mono max-w-56 truncate text-sm">{value ?? masked}</code>
       <Guard permission="sensitive:reveal">
         <Button
           size="icon-sm"
@@ -45,7 +45,7 @@ function CookieValue({ serviceId, name, masked }: { serviceId: string; name: str
 
 function Flag({ on, label }: { on: boolean; label: string }) {
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.6875rem] font-bold", on ? "bg-success-soft text-success" : "bg-surface-3 text-ink-3 line-through decoration-1")}>
+    <span className={cn("inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-bold", on ? "bg-success-soft text-success" : "bg-surface-3 text-ink-3 line-through decoration-1")}>
       {label}
     </span>
   );
@@ -79,20 +79,20 @@ export function HttpFingerprintView({ http, serviceId }: { http: HttpFingerprint
       <DefinitionList
         items={[
           { label: "Tytuł strony", value: http.title ?? "—" },
-          { label: "Adres końcowy", value: <span className="mono text-[0.8125rem] break-all">{http.url}</span> },
+          { label: "Adres końcowy", value: <span className="mono text-sm break-all">{http.url}</span> },
           { label: "Typ treści", value: http.content_type ?? "—" },
         ]}
       />
 
       {http.redirects.length ? (
         <section className="grid gap-2">
-          <h4 className="text-[0.8125rem] font-bold text-ink-2">Przekierowania</h4>
+          <h4 className="text-sm font-bold text-ink-2">Przekierowania</h4>
           <RedirectChain hops={http.redirects} finalUrl={http.url} finalStatus={http.status_code} />
         </section>
       ) : null}
 
       <section className="grid gap-2">
-        <h4 className="text-[0.8125rem] font-bold text-ink-2">Technologie</h4>
+        <h4 className="text-sm font-bold text-ink-2">Technologie</h4>
         <ul className="grid gap-2">
           {http.technologies.map((t) => (
             <li key={t.name} className="grid gap-1 rounded-lg border border-line p-3">
@@ -118,9 +118,9 @@ export function HttpFingerprintView({ http, serviceId }: { http: HttpFingerprint
       </section>
 
       <section className="grid gap-2">
-        <h4 className="text-[0.8125rem] font-bold text-ink-2">Nagłówki odpowiedzi</h4>
+        <h4 className="text-sm font-bold text-ink-2">Nagłówki odpowiedzi</h4>
         <div className="overflow-hidden rounded-lg border border-line">
-          <table className="w-full text-[0.8125rem]">
+          <table className="w-full text-sm">
             <tbody>
               {http.headers.map((h, i) => (
                 <tr key={i} className={cn("border-b border-line last:border-0", h.note && "bg-unstable-soft/60")}>
@@ -140,7 +140,7 @@ export function HttpFingerprintView({ http, serviceId }: { http: HttpFingerprint
 
       {http.cookies.length ? (
         <section className="grid gap-2">
-          <h4 className="flex items-center gap-1.5 text-[0.8125rem] font-bold text-ink-2">
+          <h4 className="flex items-center gap-1.5 text-sm font-bold text-ink-2">
             Ciasteczka <Lock className="size-3.5" aria-label="wartości szyfrowane w bazie" />
           </h4>
           <ul className="grid gap-2">
@@ -164,13 +164,13 @@ export function HttpFingerprintView({ http, serviceId }: { http: HttpFingerprint
 
       {http.tls ? (
         <section className="grid gap-2">
-          <h4 className="text-[0.8125rem] font-bold text-ink-2">Certyfikat TLS</h4>
+          <h4 className="text-sm font-bold text-ink-2">Certyfikat TLS</h4>
           <div className={cn("rounded-lg border p-3", http.tls.expired || http.tls.days_left < 21 ? "border-danger/50" : "border-line")}>
             <DefinitionList
               items={[
                 { label: "Podmiot (CN)", value: <span className="mono">{http.tls.subject_cn}</span> },
                 { label: "Wystawca", value: http.tls.issuer },
-                { label: "Nazwy (SAN)", value: <span className="mono text-[0.8125rem]">{http.tls.san.join(", ")}</span> },
+                { label: "Nazwy (SAN)", value: <span className="mono text-sm">{http.tls.san.join(", ")}</span> },
                 {
                   label: "Ważność",
                   value: (
@@ -189,7 +189,7 @@ export function HttpFingerprintView({ http, serviceId }: { http: HttpFingerprint
 
       {http.body_excerpt ? (
         <section className="grid gap-2">
-          <h4 className="text-[0.8125rem] font-bold text-ink-2">Fragment treści</h4>
+          <h4 className="text-sm font-bold text-ink-2">Fragment treści</h4>
           <pre className="mono overflow-x-auto rounded-lg bg-surface-2 p-3 text-xs leading-relaxed whitespace-pre-wrap">{http.body_excerpt}</pre>
         </section>
       ) : null}

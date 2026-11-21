@@ -14,7 +14,7 @@ export function CommandInput({ className, ...props }: React.ComponentProps<typeo
     <div className="flex items-center gap-2.5 border-b border-line px-4">
       <Search className="size-4 shrink-0 text-ink-2" aria-hidden />
       <CommandPrimitive.Input
-        className={cn("h-13 w-full bg-transparent py-3 text-[0.9375rem] outline-none placeholder:text-ink-3", className)}
+        className={cn("h-13 w-full bg-transparent py-3 text-base outline-none placeholder:text-ink-3", className)}
         {...props}
       />
     </div>

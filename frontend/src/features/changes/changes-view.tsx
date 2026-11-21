@@ -55,7 +55,7 @@ function UnstablePanel() {
     <Panel
       title="Hosty niestabilne"
       description={`Odpowiadają nieregularnie, więc zmiana może być szumem. Host staje się nieaktywny po ${settings.data?.change_detection.inactive_after_misses ?? 3} skanach bez odpowiedzi; pomiar można powtórzyć w ciągu dnia.`}
-      bodyClassName="p-0"
+      flush
     >
       <ul className="scroll-quiet max-h-[34rem] divide-y divide-line overflow-y-auto">
         {(q.data ?? []).slice(0, 40).map((u) => (
@@ -145,14 +145,14 @@ export function ChangesView() {
         <Panel bodyClassName="grid gap-5">
           <div className="flex flex-wrap items-end gap-3">
             <label className="grid gap-1.5">
-              <span className="text-[0.8125rem] font-semibold text-ink-2">Skan bazowy</span>
+              <span className="text-sm font-semibold text-ink-2">Skan bazowy</span>
               <SimpleSelect aria-label="Skan bazowy" className="w-56" value={base || d?.base.id || ""} onChange={(v) => setPair(head || d?.head.id || "", v)} options={runOptions} />
             </label>
             <span className="grid h-9 place-items-center px-1 text-ink-3" aria-hidden>
               <ArrowLeftRight className="size-4" />
             </span>
             <label className="grid gap-1.5">
-              <span className="text-[0.8125rem] font-semibold text-ink-2">Skan porównywany</span>
+              <span className="text-sm font-semibold text-ink-2">Skan porównywany</span>
               <SimpleSelect aria-label="Skan porównywany" className="w-56" value={head || d?.head.id || ""} onChange={(v) => setPair(v)} options={runOptions} />
             </label>
             <Button variant="ghost" onClick={() => setPair("")}>
@@ -194,9 +194,9 @@ export function ChangesView() {
           <Panel
             title={d ? `Skan #${d.base.number} → #${d.head.number}` : "Lista zmian"}
             description={d ? `${fmtNumber(d.total)} zmian po filtrach.` : undefined}
-            bodyClassName="p-0"
+            flush
             actions={
-              <label className="flex items-center gap-2 text-[0.8125rem] font-semibold text-ink-2">
+              <label className="flex items-center gap-2 text-sm font-semibold text-ink-2">
                 <Switch checked={onlySure} onCheckedChange={(c) => { setOnlySure(c); setPage(1); }} /> Tylko pewne (≥ 70%)
               </label>
             }

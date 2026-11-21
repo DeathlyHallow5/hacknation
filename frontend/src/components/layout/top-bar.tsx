@@ -57,7 +57,7 @@ function LiveScanPill() {
   return (
     <Link
       href={`/scans/${scan.id}`}
-      className="hidden h-9 items-center gap-2 rounded-full border border-chrome-line bg-chrome-raised px-3 text-[0.8125rem] font-semibold text-chrome-ink transition-colors hover:border-accent md:inline-flex"
+      className="hidden h-9 items-center gap-2 rounded-full border border-chrome-line bg-chrome-raised px-3 text-sm font-semibold text-chrome-ink transition-colors hover:border-accent md:inline-flex"
       title="Przejdź do skanowania w toku"
     >
       <span className={cn("size-2 rounded-full", running ? "animate-pulse-dot bg-accent" : "bg-unstable")} aria-hidden />
@@ -84,7 +84,7 @@ function A11yMenu() {
             <Accessibility className="size-4 text-link" aria-hidden /> Dostępność
           </div>
           <div className="grid gap-1.5">
-            <span className="text-[0.8125rem] font-semibold text-ink-2">Rozmiar tekstu</span>
+            <span className="text-sm font-semibold text-ink-2">Rozmiar tekstu</span>
             <Segmented
               aria-label="Rozmiar tekstu"
               value={prefs.text}
@@ -97,7 +97,7 @@ function A11yMenu() {
             />
           </div>
           <div className="grid gap-1.5">
-            <span className="text-[0.8125rem] font-semibold text-ink-2">Wygląd</span>
+            <span className="text-sm font-semibold text-ink-2">Wygląd</span>
             <Segmented
               aria-label="Motyw"
               value={prefs.theme}
@@ -113,7 +113,7 @@ function A11yMenu() {
             <span>Ogranicz animacje</span>
             <Switch checked={prefs.motion === "reduce"} onCheckedChange={(c) => set({ motion: c ? "reduce" : "full" })} />
           </label>
-          <Link href="/dostepnosc" className="text-[0.8125rem] font-semibold text-link hover:underline">
+          <Link href="/dostepnosc" className="text-sm font-semibold text-link hover:underline">
             Deklaracja dostępności
           </Link>
         </div>
@@ -140,20 +140,20 @@ function UserMenu() {
           type="button"
           className="inline-flex h-9 items-center gap-2 rounded-full border border-chrome-line bg-chrome-raised py-1 pr-2.5 pl-1 text-left text-chrome-ink transition-colors hover:border-accent"
         >
-          <span className="grid size-7 place-items-center rounded-full bg-accent text-[0.6875rem] font-extrabold text-accent-ink">
+          <span className="grid size-7 place-items-center rounded-full bg-accent text-xs font-extrabold text-accent-ink">
             {initials(session.user.name)}
           </span>
           <span className="hidden leading-tight lg:grid">
-            <span className="text-[0.8125rem] font-semibold">{session.user.name}</span>
-            <span className="text-[0.6875rem] text-chrome-ink-2">{session.role.name}</span>
+            <span className="text-sm font-semibold">{session.user.name}</span>
+            <span className="text-xs text-chrome-ink-2">{session.role.name}</span>
           </span>
-          <ChevronDown className="size-3.5 text-chrome-ink-2" aria-hidden />
+          <ChevronDown className="hidden size-3.5 text-chrome-ink-2 sm:block" aria-hidden />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-72">
         <div className="grid gap-0.5 px-2.5 py-2">
           <span className="text-sm font-bold">{session.user.name}</span>
-          <span className="text-[0.8125rem] text-ink-2">{session.user.email}</span>
+          <span className="text-sm text-ink-2">{session.user.email}</span>
           <span className="mt-1 inline-flex w-fit items-center gap-1 rounded-md bg-accent/12 px-1.5 py-0.5 text-xs font-semibold text-link">
             <ShieldCheck className="size-3.5" aria-hidden /> {session.role.name}
           </span>
@@ -272,11 +272,11 @@ export function TopBar({ onOpenSearch }: { onOpenSearch: () => void }) {
         <Link href="/" className="shrink-0 rounded-md" aria-label="CBI AGH — Attack Surface Intelligence, strona główna">
           <Wordmark />
         </Link>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
           <button
             type="button"
             onClick={onOpenSearch}
-            className="hidden h-9 w-72 items-center gap-2 rounded-lg border border-chrome-line bg-chrome-raised px-3 text-left text-[0.8125rem] text-chrome-ink-2 transition-colors hover:border-accent md:flex xl:w-80"
+            className="hidden h-9 w-72 items-center gap-2 rounded-lg border border-chrome-line bg-chrome-raised px-3 text-left text-sm text-chrome-ink-2 transition-colors hover:border-accent md:flex xl:w-80"
           >
             <Search className="size-4" aria-hidden />
             <span className="flex-1 truncate">Szukaj adresu IP, domeny lub hosta…</span>
@@ -291,7 +291,7 @@ export function TopBar({ onOpenSearch }: { onOpenSearch: () => void }) {
         </div>
       </div>
       <nav aria-label="Główne sekcje" className="hidden border-t border-chrome-line/70 lg:block">
-        <div className="mx-auto flex max-w-[1440px] items-center gap-0.5 px-5 lg:px-6">
+        <div className="scroll-quiet relative mx-auto flex max-w-[1440px] items-center gap-0.5 overflow-x-auto px-5 lg:px-6">
           {NAV.filter((i) => can(i.perm)).map((i) => {
             const active = isActive(pathname, i.href);
             return (

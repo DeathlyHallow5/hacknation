@@ -5,8 +5,8 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { ChartTooltip, LegendItem, TipRow, useWidth, type TipState } from "@/components/viz/core";
 import type { ChangeKind, ChangesTimelinePoint } from "@/lib/api/types";
-import { fmtDayMonth, fmtNumber } from "@/lib/format";
-import { CHANGE_LABEL_PLURAL } from "@/lib/labels";
+import { countLabel, fmtDayMonth, fmtNumber } from "@/lib/format";
+import { CHANGE_COUNT_FORMS, CHANGE_LABEL_PLURAL } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 
 /** Stack order chosen with the palette validator (adjacent pairs stay CVD-separable). */
@@ -32,11 +32,14 @@ export function ChangesTimeline({
   height = 200,
   selected,
   onSelect,
+  legend = true,
 }: {
   points: ChangesTimelinePoint[];
   height?: number;
   selected?: number | null;
   onSelect?: (p: ChangesTimelinePoint) => void;
+  /** false when the page already shows the four kinds (e.g. as filter buttons). */
+  legend?: boolean;
 }) {
   const [ref, width] = useWidth<HTMLDivElement>(640);
   const [hover, setHover] = React.useState<number | null>(null);
@@ -55,7 +58,6 @@ export function ChangesTimeline({
   const slot = plotW / n;
   const barW = Math.max(4, Math.min(22, slot - 4));
   const sy = (v: number) => (v / yMax) * plotH;
-  const last = points.at(-1);
 
   const tip: TipState | null =
     hover === null
@@ -79,21 +81,23 @@ export function ChangesTimeline({
         };
 
   return (
-    <div className="grid gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-x-4 gap-y-1.5" aria-label="Legenda">
-          {KIND_ORDER.map((k) => (
-            <LegendItem key={k} color={KIND_COLOR[k]} label={CHANGE_LABEL_PLURAL[k]} value={last ? fmtNumber(last[k]) : undefined} />
-          ))}
-        </div>
+    <div className="grid min-w-0 grid-cols-1 gap-3">
+      <div className={cn("flex flex-wrap items-center gap-3", legend ? "justify-between" : "justify-end")}>
+        {legend ? (
+          <div className="flex flex-wrap gap-x-4 gap-y-1.5" aria-label="Legenda">
+            {KIND_ORDER.map((k) => (
+              <LegendItem key={k} color={KIND_COLOR[k]} label={CHANGE_LABEL_PLURAL[k]} />
+            ))}
+          </div>
+        ) : null}
         <Button size="sm" variant="ghost" onClick={() => setTable((t) => !t)} aria-pressed={table}>
           <Table2 /> {table ? "Wykres" : "Tabela"}
         </Button>
       </div>
       {table ? (
-        <div className="scroll-quiet max-h-64 overflow-auto rounded-lg border border-line">
+        <div className="scroll-quiet relative max-h-64 overflow-auto rounded-lg border border-line">
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-surface-2 text-left text-[0.8125rem] text-ink-2">
+            <thead className="sticky top-0 bg-surface-2 text-left text-xs text-ink-2">
               <tr>
                 <th className="px-3 py-2 font-semibold">Skan</th>
                 <th className="px-3 py-2 font-semibold">Data</th>
@@ -123,7 +127,7 @@ export function ChangesTimeline({
           </table>
         </div>
       ) : (
-        <div ref={ref} className="relative">
+        <div ref={ref} className="relative min-w-0">
           <svg width={width} height={height} className="block" role="img" aria-label={`Zmiany wykryte w ostatnich ${points.length} skanach. Szczegóły dostępne w widoku tabeli.`}>
             {ticks.map((t) => (
               <g key={t}>
@@ -170,7 +174,7 @@ export function ChangesTimeline({
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") onSelect?.(p);
                     }}
-                    aria-label={`Skan ${p.scan_number}: ${p.new} nowe, ${p.changed} zmienione, ${p.gone} zniknęły, ${p.unstable} niestabilne`}
+                    aria-label={`Skan ${p.scan_number}: ${KIND_ORDER.map((k) => countLabel(p[k], CHANGE_COUNT_FORMS[k])).join(", ")}`}
                   />
                   {i % Math.ceil(n / 8) === 0 || i === n - 1 ? (
                     <text x={left + i * slot + slot / 2} y={height - 6} textAnchor="middle" className={cn("text-[11px] tabular", i === n - 1 ? "fill-ink font-bold" : "fill-ink-2")}>

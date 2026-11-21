@@ -69,7 +69,7 @@ function HostsTab() {
       ),
     },
     { key: "change", header: "Zmiana", cell: (h) => (h.change === "unchanged" ? <span className="text-ink-3">—</span> : <ChangeChip state={h.change} />) },
-    { key: "device", header: "Typ", hideBelow: "lg", cell: (h) => <span className="text-[0.8125rem]">{DEVICE_LABEL[h.device_type]}</span> },
+    { key: "device", header: "Typ", hideBelow: "lg", cell: (h) => <span className="text-sm">{DEVICE_LABEL[h.device_type]}</span> },
     {
       key: "ports",
       header: "Porty",
@@ -86,7 +86,7 @@ function HostsTab() {
             {h.open_ports.length > 5 ? <Chip>+{h.open_ports.length - 5}</Chip> : null}
           </span>
         ) : (
-          <span className="text-[0.8125rem] text-ink-3">tylko ping</span>
+          <span className="text-sm text-ink-3">tylko ping</span>
         ),
     },
     {
@@ -102,30 +102,30 @@ function HostsTab() {
         </span>
       ),
     },
-    { key: "owner", header: "Właściciel", sort: "owner", hideBelow: "xl", cell: (h) => <span className="text-[0.8125rem]">{h.owner ?? "—"}</span> },
+    { key: "owner", header: "Właściciel", sort: "owner", hideBelow: "xl", cell: (h) => <span className="text-sm">{h.owner ?? "—"}</span> },
     { key: "score", header: "Priorytet", sort: "score", hideBelow: "lg", cell: (h) => (h.score ? <ScoreMeter score={h.score} /> : <span className="text-ink-3">—</span>) },
-    { key: "seen", header: "Ostatnio", sort: "last_seen", hideBelow: "md", cell: (h) => <span className="text-[0.8125rem] whitespace-nowrap text-ink-2">{fmtSmart(h.last_seen)}</span> },
+    { key: "seen", header: "Ostatnio", sort: "last_seen", hideBelow: "md", cell: (h) => <span className="text-sm whitespace-nowrap text-ink-2">{fmtSmart(h.last_seen)}</span> },
   ];
 
   return (
-    <Panel bodyClassName="p-0">
+    <Panel flush>
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
         <SearchInput value={q} onChange={(v) => { setQ(v); reset(); }} placeholder="IP, nazwa hosta, właściciel lub tag…" className="w-full sm:w-80" />
         <SimpleSelect aria-label="Dostępność" className="w-40" value={availability} onChange={(v) => { setAvailability(v as Availability | ""); reset(); }} allLabel="Dostępność" options={(Object.keys(AVAILABILITY_LABEL) as Availability[]).map((a) => ({ value: a, label: AVAILABILITY_LABEL[a] }))} />
         <SimpleSelect aria-label="Zmiana" className="w-40" value={change} onChange={(v) => { setChange(v as ChangeState | ""); reset(); }} allLabel="Każda zmiana" options={(["new", "changed", "gone", "unstable", "unchanged"] as ChangeState[]).map((c) => ({ value: c, label: CHANGE_LABEL[c] }))} />
         <SimpleSelect aria-label="Typ urządzenia" className="w-48" value={device} onChange={(v) => { setDevice(v as DeviceType | ""); reset(); }} allLabel="Każdy typ" options={(Object.keys(DEVICE_LABEL) as DeviceType[]).map((d) => ({ value: d, label: DEVICE_LABEL[d] }))} />
-        <label className="flex items-center gap-2 text-[0.8125rem] font-semibold text-ink-2">
+        <label className="flex items-center gap-2 text-sm font-semibold text-ink-2">
           <Switch checked={overrides} onCheckedChange={(c) => { setOverrides(c); reset(); }} /> Edytowane ręcznie
         </label>
         {cidr ? (
-          <Chip tone="accent" className="h-7 gap-1.5 px-2 text-[0.8125rem]">
+          <Chip tone="accent" className="h-7 gap-1.5 px-2 text-sm">
             <span className="mono">{cidr}</span>
             <button type="button" aria-label="Usuń filtr podsieci" onClick={() => { setCidr(""); router.replace("/assets", { scroll: false }); }}>
               <X className="size-3.5" />
             </button>
           </Chip>
         ) : null}
-        <span className="ml-auto text-[0.8125rem] text-ink-2">{query.data ? `${fmtNumber(query.data.total)} hostów` : ""}</span>
+        <span className="ml-auto text-sm text-ink-2">{query.data ? `${fmtNumber(query.data.total)} hostów` : ""}</span>
       </div>
       {query.isError ? <ErrorState className="m-4" error={query.error} onRetry={() => query.refetch()} /> : null}
       <DataTable
@@ -186,7 +186,7 @@ function ServicesTab({ initialGroup }: { initialGroup: string }) {
         </div>
       ),
     },
-    { key: "title", header: "Tytuł strony", hideBelow: "lg", cell: (s) => <span className="line-clamp-2 max-w-72 text-[0.8125rem]">{s.title ?? "—"}</span> },
+    { key: "title", header: "Tytuł strony", hideBelow: "lg", cell: (s) => <span className="line-clamp-2 max-w-72 text-sm">{s.title ?? "—"}</span> },
     {
       key: "tech",
       header: "Technologie",
@@ -204,22 +204,22 @@ function ServicesTab({ initialGroup }: { initialGroup: string }) {
     { key: "change", header: "Zmiana", cell: (s) => (s.change === "unchanged" ? <span className="text-ink-3">—</span> : <ChangeChip state={s.change} />) },
   ];
   return (
-    <Panel bodyClassName="p-0">
+    <Panel flush>
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
         <SearchInput value={q} onChange={(v) => { setQ(v); setPage(1); }} placeholder="Produkt, technologia, IP…" className="w-full sm:w-72" />
         <SearchInput value={port} onChange={(v) => { setPort(v.replace(/\D/g, "")); setPage(1); }} placeholder="Port" className="w-28" aria-label="Filtr portu" />
-        <label className="flex items-center gap-2 text-[0.8125rem] font-semibold text-ink-2">
+        <label className="flex items-center gap-2 text-sm font-semibold text-ink-2">
           <Switch checked={web} onCheckedChange={(c) => { setWeb(c); setPage(1); }} /> Tylko WWW
         </label>
         {group ? (
-          <Chip tone="accent" className="h-7 gap-1.5 px-2 text-[0.8125rem]">
+          <Chip tone="accent" className="h-7 gap-1.5 px-2 text-sm">
             Grupa: {group}
             <button type="button" aria-label="Usuń filtr grupy" onClick={() => { setGroup(""); router.replace("/assets?tab=services", { scroll: false }); }}>
               <X className="size-3.5" />
             </button>
           </Chip>
         ) : null}
-        <span className="ml-auto text-[0.8125rem] text-ink-2">{query.data ? `${fmtNumber(query.data.total)} usług` : ""}</span>
+        <span className="ml-auto text-sm text-ink-2">{query.data ? `${fmtNumber(query.data.total)} usług` : ""}</span>
       </div>
       <DataTable
         columns={columns}
@@ -265,7 +265,7 @@ function GroupsTab({ onOpenGroup }: { onOpenGroup: (key: string) => void }) {
               </div>
               <ul className="grid gap-1">
                 {g.versions.slice(0, 4).map((v) => (
-                  <li key={v.version ?? "?"} className="grid grid-cols-[minmax(0,8rem)_1fr_auto] items-center gap-2 text-[0.8125rem]">
+                  <li key={v.version ?? "?"} className="grid grid-cols-[minmax(0,8rem)_1fr_auto] items-center gap-2 text-sm">
                     <span className="mono truncate">{v.version ?? "nieznana"}</span>
                     <span className="h-1.5 rounded-r bg-surface-3">
                       <span className="block h-full rounded-r bg-ink-3" style={{ width: `${(v.count / vmax) * 100}%` }} />

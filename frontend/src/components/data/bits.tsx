@@ -1,10 +1,9 @@
 "use client";
 
-import { Check, Copy, Inbox, Pencil, RotateCcw, Search, TriangleAlert, X } from "lucide-react";
+import { Check, Copy, Pencil, RotateCcw, Search, TriangleAlert, X } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/form-controls";
-import { Chip } from "@/components/ui/misc";
 import { Popover, PopoverContent, PopoverTrigger, Tooltip } from "@/components/ui/overlays";
 import { errorMessage } from "@/lib/api/client";
 import type { ManualOverride, Permission } from "@/lib/api/types";
@@ -13,12 +12,41 @@ import { permissionLabel } from "@/lib/permissions";
 import { useCan, useSession } from "@/lib/session";
 import { cn, copyToClipboard } from "@/lib/utils";
 
-/** Machine value (IP, port, hash) in mono with a copy button on hover. */
-export function MonoValue({ value, className, copy = true }: { value: string; className?: string; copy?: boolean }) {
+/**
+ * Machine value (IP, port, hash) in mono with a copy button on hover.
+ * With `onActivate` the value itself is a link-style button (e.g. opens the editor).
+ */
+export function MonoValue({
+  value,
+  className,
+  copy = true,
+  onActivate,
+  activateLabel,
+}: {
+  value: string;
+  className?: string;
+  copy?: boolean;
+  onActivate?: () => void;
+  activateLabel?: string;
+}) {
   const [copied, setCopied] = React.useState(false);
   return (
     <span className={cn("group/mono inline-flex max-w-full items-center gap-1", className)}>
-      <span className="mono truncate">{value}</span>
+      {onActivate ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onActivate();
+          }}
+          aria-label={activateLabel}
+          className="mono truncate rounded-sm text-left underline-offset-2 hover:text-link hover:underline"
+        >
+          {value}
+        </button>
+      ) : (
+        <span className="mono truncate">{value}</span>
+      )}
       {copy ? (
         <button
           type="button"
@@ -100,11 +128,11 @@ export function EmptyState({
   className?: string;
 }) {
   return (
-    <div className={cn("grid justify-items-center gap-2 px-6 py-12 text-center", className)}>
-      <span className="grid size-10 place-items-center rounded-full bg-surface-3 text-ink-2 [&_svg]:size-5">{icon ?? <Inbox />}</span>
-      <p className="text-[0.9375rem] font-bold text-ink">{title}</p>
-      {description ? <p className="max-w-md text-sm text-ink-2">{description}</p> : null}
-      {action ? <div className="mt-2">{action}</div> : null}
+    <div className={cn("grid justify-items-start gap-1 px-5 py-8 text-left", className)}>
+      {icon ? <span className="mb-1 text-ink-2 [&_svg]:size-5">{icon}</span> : null}
+      <p className="text-sm font-semibold text-ink">{title}</p>
+      {description ? <p className="max-w-[65ch] text-sm text-pretty text-ink-2">{description}</p> : null}
+      {action ? <div className="mt-3">{action}</div> : null}
     </div>
   );
 }
@@ -123,33 +151,32 @@ export function ErrorState({ error, onRetry, className }: { error: unknown; onRe
   );
 }
 
+/** Tags as plain text: "dmz, laboratorium +2". */
 export function TagList({ tags, max = 3, className }: { tags: string[]; max?: number; className?: string }) {
-  if (!tags.length) return <span className="text-ink-3">—</span>;
+  if (!tags.length) return <span className="text-ink-2">—</span>;
   return (
-    <span className={cn("flex flex-wrap gap-1", className)}>
-      {tags.slice(0, max).map((t) => (
-        <Chip key={t} tone="outline">
-          #{t}
-        </Chip>
-      ))}
-      {tags.length > max ? <Chip>+{tags.length - max}</Chip> : null}
+    <span className={cn("text-sm text-ink-2", className)} title={tags.length > max ? tags.join(", ") : undefined}>
+      {tags.slice(0, max).join(", ")}
+      {tags.length > max ? <span className="tabular"> +{tags.length - max}</span> : null}
     </span>
   );
 }
 
-/** Free-text tag editor (Enter / comma adds, Backspace removes). */
+/** Free-text tag editor (Enter / comma adds, Backspace removes). `mono` for machine values such as CIDR ranges. */
 export function TagInput({
   value,
   onChange,
   suggestions = [],
   placeholder = "Dodaj tag i naciśnij Enter",
   id,
+  mono,
 }: {
   value: string[];
   onChange: (tags: string[]) => void;
   suggestions?: string[];
   placeholder?: string;
   id?: string;
+  mono?: boolean;
 }) {
   const [draft, setDraft] = React.useState("");
   const add = (raw: string) => {
@@ -161,9 +188,9 @@ export function TagInput({
   return (
     <div className="flex min-h-9 flex-wrap items-center gap-1.5 rounded-lg border border-line-strong bg-surface px-2 py-1.5 focus-within:border-accent focus-within:ring-3 focus-within:ring-accent/25">
       {value.map((t) => (
-        <span key={t} className="inline-flex items-center gap-1 rounded-md bg-surface-3 py-0.5 pr-1 pl-1.5 text-xs font-semibold text-ink-2">
-          #{t}
-          <button type="button" onClick={() => onChange(value.filter((x) => x !== t))} aria-label={`Usuń tag ${t}`} className="rounded p-0.5 hover:text-ink">
+        <span key={t} className={cn("inline-flex items-center gap-1 rounded-md bg-surface-3 py-0.5 pr-1 pl-1.5 text-xs text-ink contrast:border contrast:border-current", mono && "mono")}>
+          {t}
+          <button type="button" onClick={() => onChange(value.filter((x) => x !== t))} aria-label={`Usuń ${t}`} className="rounded p-0.5 text-ink-2 hover:text-ink">
             <X className="size-3" />
           </button>
         </span>
@@ -212,18 +239,18 @@ export function ManualOverrideBadge({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex items-center gap-1 rounded-md bg-changed-soft px-1.5 py-0.5 text-[0.6875rem] font-bold text-changed-ink hover:ring-1 hover:ring-changed contrast:border contrast:border-current"
+          className="inline-flex items-center gap-1 rounded-md bg-changed-soft px-1.5 py-0.5 text-xs font-semibold text-changed-ink hover:ring-1 hover:ring-changed contrast:border contrast:border-current"
         >
           <Pencil className="size-3" aria-hidden /> Edytowano ręcznie
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-80 text-sm">
-        <p className="font-bold">Wartość ustawiona ręcznie</p>
+        <p className="font-semibold">Wartość ustawiona ręcznie</p>
         <p className="mt-1 text-ink-2">
           {override.by}, {fmtSmart(override.at)}. Kolejne skany nie nadpiszą tej zmiany.
         </p>
         {override.scanner_value !== undefined ? (
-          <p className="mt-2 rounded-lg bg-surface-2 px-2.5 py-2 text-[0.8125rem]">
+          <p className="mt-2 rounded-lg bg-surface-2 px-2.5 py-2 text-sm">
             <span className="text-ink-2">Wartość ze skanu: </span>
             <span className="font-semibold">{scannerLabel ?? (String(override.scanner_value ?? "") || "—")}</span>
           </p>
@@ -248,11 +275,24 @@ export function Can({ permission, children, fallback = null }: { permission: Per
  * Wraps an action control: when the role lacks the permission, the control is
  * disabled and a tooltip explains why (instead of silently hiding it).
  */
-export function Guard({ permission, children }: { permission: Permission; children: React.ReactElement<{ disabled?: boolean }> }) {
+export function Guard({
+  permission,
+  children,
+}: {
+  permission: Permission;
+  children: React.ReactElement<{ disabled?: boolean; className?: string; tabIndex?: number; onClick?: React.MouseEventHandler; "aria-disabled"?: boolean }>;
+}) {
   const can = useCan();
   const session = useSession();
   if (can(permission)) return children;
-  const disabled = React.cloneElement(children, { disabled: true });
+  // Also blocks <Button asChild><Link/></Button>: anchors ignore the `disabled` attribute.
+  const disabled = React.cloneElement(children, {
+    disabled: true,
+    "aria-disabled": true,
+    tabIndex: -1,
+    className: cn(children.props.className, "pointer-events-none opacity-50"),
+    onClick: (e: React.MouseEvent) => e.preventDefault(),
+  });
   return (
     <Tooltip content={`Twoja rola (${session.role.name}) nie ma uprawnienia „${permissionLabel(permission)}”.`}>
       <span tabIndex={0} className="inline-flex rounded-lg">

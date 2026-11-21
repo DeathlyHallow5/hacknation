@@ -92,7 +92,7 @@ function RoleForm({ role, onOpenChange }: { role: Role | null; onOpenChange: (o:
                       <label key={i.key} className="flex items-center gap-2 text-sm">
                         <Checkbox checked={perms.has(i.key)} onCheckedChange={() => toggle(i.key)} />
                         {i.label}
-                        <code className="mono ml-auto text-[0.6875rem] text-ink-3">{i.key}</code>
+                        <code className="mono ml-auto text-xs text-ink-3">{i.key}</code>
                       </label>
                     ))}
                   </div>
@@ -102,7 +102,7 @@ function RoleForm({ role, onOpenChange }: { role: Role | null; onOpenChange: (o:
           </div>
         </SheetBody>
         <SheetFooter>
-          <span className="mr-auto text-[0.8125rem] text-ink-2">Wybrano {perms.size} uprawnień</span>
+          <span className="mr-auto text-sm text-ink-2">Wybrano {perms.size} uprawnień</span>
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Anuluj
           </Button>
@@ -143,7 +143,7 @@ export function RolesView() {
               <h3 className="font-bold">{r.name}</h3>
               {r.builtin ? <Lock className="size-4 text-ink-3" aria-label="rola wbudowana" /> : <Chip tone="accent">własna</Chip>}
             </div>
-            <p className="text-[0.8125rem] leading-snug text-ink-2">{r.description}</p>
+            <p className="text-sm leading-snug text-ink-2">{r.description}</p>
             <p className="text-xs text-ink-2">
               {r.permissions.length} uprawnień, {r.users_count} {r.users_count === 1 ? "użytkownik" : "użytkowników"}
             </p>
@@ -163,11 +163,11 @@ export function RolesView() {
         ))}
         {!roles.data ? [0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-40 rounded-xl" />) : null}
       </div>
-      <Panel title="Macierz uprawnień" description="Kto co może. Te same reguły egzekwuje API (odpowiedź 403 z nazwą brakującego uprawnienia)." bodyClassName="p-0">
-        <div className="scroll-quiet overflow-x-auto">
+      <Panel title="Macierz uprawnień" description="Kto co może. Te same reguły egzekwuje API (odpowiedź 403 z nazwą brakującego uprawnienia)." flush>
+        <div className="scroll-quiet relative overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-line bg-surface-2 text-left text-[0.8125rem] text-ink-2">
+              <tr className="border-b border-line bg-surface-2 text-left text-sm text-ink-2">
                 <th scope="col" className="px-4 py-2.5 font-semibold">Uprawnienie</th>
                 {list.map((r) => (
                   <th key={r.id} scope="col" className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">
@@ -187,7 +187,7 @@ export function RolesView() {
                   {g.items.map((i) => (
                     <tr key={i.key} className="border-b border-line last:border-0">
                       <th scope="row" className="px-4 py-2 text-left font-normal">
-                        {i.label} <code className="mono ml-1 text-[0.6875rem] text-ink-3">{i.key}</code>
+                        {i.label} <code className="mono ml-1 text-xs text-ink-3">{i.key}</code>
                       </th>
                       {list.map((r) => {
                         const has = r.permissions.includes(i.key);

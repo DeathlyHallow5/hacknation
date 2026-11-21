@@ -109,7 +109,7 @@ function DefectDojoForm({ d }: { d: DefectDojoConfig }) {
         <label className="flex items-start justify-between gap-4 rounded-lg border border-line p-3">
           <span className="grid gap-0.5">
             <span className="text-sm font-semibold">Wysyłaj automatycznie po każdym skanie</span>
-            <span className="text-[0.8125rem] text-ink-2">Nowe znaleziska z priorytetem co najmniej {minScore}.</span>
+            <span className="text-sm text-ink-2">Nowe znaleziska z priorytetem co najmniej {minScore}.</span>
           </span>
           <Switch checked={auto} disabled={!editable} onCheckedChange={setAuto} />
         </label>
@@ -144,7 +144,7 @@ function DefectDojoForm({ d }: { d: DefectDojoConfig }) {
                   {e.status === "success" ? "Sukces" : e.status === "partial" ? "Częściowo" : "Błąd"}
                 </Chip>
               </span>
-              <span className="text-[0.8125rem] text-ink-2">{e.message}</span>
+              <span className="text-sm text-ink-2">{e.message}</span>
               <span className="text-xs text-ink-3">
                 {e.by}, {fmtSmart(e.at)}
               </span>
@@ -163,7 +163,7 @@ export function IntegrationsView() {
       <PageHeader title="Integracje" description="Połączenie z platformą zarządzania podatnościami i stan narzędzi skanujących." />
       <div className="grid gap-6">
         <DefectDojoPanel />
-        <Panel title="Silniki skanujące" description="Rdzeń w Rust uruchamia sprawdzone narzędzia open source i normalizuje ich wyniki do jednego modelu danych." bodyClassName="p-0">
+        <Panel title="Silniki skanujące" description="Rdzeń w Rust uruchamia sprawdzone narzędzia open source i normalizuje ich wyniki do jednego modelu danych." flush>
           <ul className="divide-y divide-line">
             {(engines.data ?? []).map((e) => (
               <li key={e.name} className="flex flex-wrap items-center gap-4 px-5 py-3">

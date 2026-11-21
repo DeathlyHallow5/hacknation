@@ -63,7 +63,7 @@ export function HilbertMap({ cidr, size = 360, className }: { cidr: string; size
   });
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const animated = React.useRef(false);
-  const [hover, setHover] = React.useState<{ x: number; y: number; idx: number } | null>(null);
+  const [hover, setHover] = React.useState<{ x: number; y: number; w: number; idx: number } | null>(null);
 
   const statuses = React.useMemo(() => (data ? decode(data.data, data.size) : null), [data]);
   const n = data ? Math.round(Math.sqrt(data.size)) : 256;
@@ -205,9 +205,10 @@ export function HilbertMap({ cidr, size = 360, className }: { cidr: string; size
     const duration = 950;
     let painted = 0;
     const frame = (t: number) => {
-      const p = Math.min(1, (t - start) / duration);
+      // The first rAF timestamp can precede `start`: clamp so the range never goes negative.
+      const p = Math.min(1, Math.max(0, (t - start) / duration));
       const eased = 1 - Math.pow(1 - p, 2);
-      const target = Math.floor(eased * data.size);
+      const target = Math.max(painted, Math.min(data.size, Math.floor(eased * data.size)));
       paintRange(painted, target);
       painted = target;
       draw();
@@ -224,7 +225,7 @@ export function HilbertMap({ cidr, size = 360, className }: { cidr: string; size
     const cx = Math.floor(((e.clientX - rect.left) / rect.width) * n);
     const cy = Math.floor(((e.clientY - rect.top) / rect.height) * n);
     if (cx < 0 || cy < 0 || cx >= n || cy >= n) return setHover(null);
-    setHover({ x: e.clientX - rect.left, y: e.clientY - rect.top, idx: hilbertXY2D(n, cx, cy) });
+    setHover({ x: e.clientX - rect.left, y: e.clientY - rect.top, w: rect.width, idx: hilbertXY2D(n, cx, cy) });
   };
 
   const hoverInfo = React.useMemo(() => {
@@ -242,11 +243,11 @@ export function HilbertMap({ cidr, size = 360, className }: { cidr: string; size
   const c = data?.counts;
   return (
     <div className={cn("grid gap-3", className)}>
-      <div className="relative" style={{ width: size, height: size, maxWidth: "100%" }}>
-        {!data ? <div className="on-chrome skeleton size-full rounded-lg" /> : null}
+      <div className="relative aspect-square w-full" style={{ maxWidth: size }}>
+        {!data ? <div className="on-chrome skeleton absolute inset-0 rounded-lg" /> : null}
         <canvas
           ref={canvasRef}
-          style={{ width: size, height: size, maxWidth: "100%", aspectRatio: "1 / 1" }}
+          style={{ width: "100%", height: "100%" }}
           className={cn("block cursor-crosshair rounded-lg", !data && "invisible")}
           role="img"
           aria-label={
@@ -270,9 +271,9 @@ export function HilbertMap({ cidr, size = 360, className }: { cidr: string; size
         {hover && hoverInfo ? (
           <div
             className="pointer-events-none absolute z-20 min-w-44 rounded-lg border border-chrome-line bg-chrome px-3 py-2 text-xs text-chrome-ink shadow-pop"
-            style={{ left: hover.x, top: hover.y, transform: `translate(${hover.x > size - 200 ? "calc(-100% - 14px)" : "14px"}, -50%)` }}
+            style={{ left: hover.x, top: hover.y, transform: `translate(${hover.x > hover.w - 200 ? "calc(-100% - 14px)" : "14px"}, -50%)` }}
           >
-            <div className="mono text-[0.8125rem] font-bold text-white">{hoverInfo.ip}</div>
+            <div className="mono text-sm font-bold text-white">{hoverInfo.ip}</div>
             <div className="text-chrome-ink-2">{STATUS_LABEL[hoverInfo.status]}</div>
             <div className="mt-1.5 border-t border-chrome-line pt-1.5 text-chrome-ink-2">
               <span className="mono text-chrome-ink">{hoverInfo.subnet}</span>: {hoverInfo.active} hostów. Kliknij, aby otworzyć listę.
