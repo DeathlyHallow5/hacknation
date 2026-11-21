@@ -21,7 +21,7 @@ RUN touch src/main.rs && cargo build --release
 
 # 3) Runtime: nmap from Debian + verified PD tools, non-root.
 FROM ${BASE_REGISTRY}/debian:bookworm-slim AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends nmap libpcap0.8 ca-certificates curl \
+RUN apt-get update && apt-get install -y --no-install-recommends nmap libpcap0.8 libcap2-bin ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 asi
 # nmap -sV also runs the NSE "version" scripts (vmware-version: POST /sdk, http-trane-info:
@@ -29,6 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends nmap libpcap0.8
 # only the version probes, so those scripts are not shipped.
 RUN cd /usr/share/nmap/scripts && grep -l 'categories *= *{[^}]*"version"' *.nse | xargs -r rm -f     && nmap --script-updatedb >/dev/null
 COPY --from=tools /opt/asi-tools /opt/asi-tools
+# SYN scan (opt-in, compose.syn.yaml): a separate naabu copy carries cap_net_raw, so only
+# that binary can open raw sockets; the default naabu and everything else stay unprivileged.
+RUN cp /opt/asi-tools/naabu /opt/asi-tools/naabu-raw && setcap cap_net_raw=eip /opt/asi-tools/naabu-raw
 COPY --from=builder /src/target/release/asi-core /usr/local/bin/asi-core
 ENV ASI_TOOLS_DIR=/opt/asi-tools ASI_BIND=0.0.0.0:8000 RUST_LOG=info
 USER asi

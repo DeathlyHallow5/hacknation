@@ -24,6 +24,9 @@ pub struct Config {
     /// First admin, created at startup only while no active admin exists.
     pub admin_user: String,
     pub admin_password: Option<String>,
+    /// `ASI_SYN_SCAN=1`: SYN (half-open) port discovery with `naabu-raw`. Needs the
+    /// `compose.syn.yaml` overrides; checked at startup and switched off if they are missing.
+    pub syn_scan: Option<std::path::PathBuf>,
 }
 
 impl Config {
@@ -51,7 +54,22 @@ impl Config {
                 .filter(|v| !v.is_empty())
                 .unwrap_or_else(|| "admin".into()),
             admin_password: std::env::var("ASI_ADMIN_PASSWORD").ok().filter(|v| !v.is_empty()),
-        })
+            syn_scan: None,
+        }
+        .with_syn_scan())
+    }
+
+    fn with_syn_scan(mut self) -> Self {
+        if std::env::var("ASI_SYN_SCAN").is_ok_and(|v| matches!(v.as_str(), "true" | "1")) {
+            match crate::engine::raw_naabu(&self.tools_dir) {
+                Ok(bin) => {
+                    tracing::info!("port discovery: SYN scan ({})", bin.display());
+                    self.syn_scan = Some(bin);
+                }
+                Err(why) => tracing::warn!("ASI_SYN_SCAN is set but SYN scan is unavailable ({why}); using CONNECT scan"),
+            }
+        }
+        self
     }
 
     /// Settings for unit tests: no environment, nothing reachable.
@@ -70,6 +88,7 @@ impl Config {
             cookie_secure: false,
             admin_user: "admin".into(),
             admin_password: None,
+            syn_scan: None,
         }
     }
 }
