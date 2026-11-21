@@ -1,0 +1,20 @@
+{
+  "scanner": "nmap 7.97 (-sV, przekonwertowane)",
+  "started_at": "2026-11-20T21:10:00Z",
+  "finished_at": "2026-11-20T21:42:00Z",
+  "hosts": [
+    {
+      "ip": "10.0.237.50",
+      "hostnames": ["mlflow.lab-ai.wydzial-informatyki.uczelnia.example"],
+      "services": [
+        { "port": 22, "protocol": "tcp", "name": "ssh", "product": "OpenSSH", "version": "9.6p1" },
+        { "port": 5000, "protocol": "tcp", "name": "http", "product": "MLflow", "version": "2.11.1" }
+      ]
+    },
+    {
+      "ip": "10.0.237.51",
+      "hostnames": [],
+      "services": [{ "port": 9090, "protocol": "tcp", "name": "http", "product": "Prometheus", "version": "2.49.1" }]
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+# Sygnatury własne — wyłącznie bezpieczne, pasywne sprawdzenia (GET/HEAD, bez logowania).
+signatures:
+  - name: "MLflow — interfejs bez uwierzytelnienia"
+    description: "Panel MLflow wystawiony w sieci laboratoriów."
+    category: exposure
+    technology: MLflow
+    score_weight: 25
+    enabled: true
+    tags: [laboratorium, ai]
+    match:
+      operator: and
+      conditions:
+        - { type: title, op: contains, value: "MLflow" }
+        - { type: path, path: "/api/2.0/mlflow/experiments/list", op: exists, expect_status: 200 }
+  - name: "Nagłówek X-Debug-Token-Link"
+    description: "Link do profilera Symfony — typowy dla trybu dev."
+    category: staging
+    technology: Symfony
+    score_weight: 20
+    enabled: true
+    tags: [staging]
+    match:
+      operator: and
+      conditions:
+        - { type: header, name: "X-Debug-Token-Link", op: exists }
