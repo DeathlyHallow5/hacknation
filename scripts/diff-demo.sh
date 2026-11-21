@@ -25,7 +25,7 @@ wait_run() {
     [ -n "$run" ] && [ "$run" != "${2:-}" ] && break
     sleep 2
   done
-  until curl -sf "$API/runs/$run" | grep -qE '"status":"(done|failed|cancelled)"'; do sleep 3; done
+  until curl -sf "$API/runs/$run" | grep -qE '"status":"(done|partial|failed|cancelled)"'; do sleep 3; done
   echo "$run"
 }
 

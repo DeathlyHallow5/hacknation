@@ -7,6 +7,11 @@
 //!    miss_count+1 → `unstable`, or `inactive` once miss_count reaches the scan's
 //!    `inactive_after_misses`. Hosts that came back get `flaps+1`.
 //! 3. Diff against the previous finished run of the same scan, stored encrypted.
+//!
+//! Coverage (F-04, F-05): only addresses covered by BOTH runs are compared — inside both
+//! target lists and not in a failed batch. Removed/added targets and failed batches are
+//! counted as `not_comparable`, never reported as gone/new. `partial` runs are diffed but
+//! never used as a baseline.
 
 use crate::{
     diff::{self, DiffEntry, HostState, Kind, Observation, Snapshot},
@@ -47,6 +52,8 @@ pub struct DiffSummary {
     pub changed: u64,
     /// Entries with interest 3 (new admin panel, staging, risky port...).
     pub important: u64,
+    /// Addresses seen in either run but not covered by both (skipped, not "gone").
+    pub not_comparable: u64,
 }
 
 impl DiffSummary {
@@ -58,8 +65,57 @@ impl DiffSummary {
             gone: count(diff::Change::Gone),
             changed: count(diff::Change::Changed),
             important: entries.iter().filter(|e| e.interest >= 3).count() as u64,
+            not_comparable: 0,
         }
     }
+}
+
+/// What a run actually measured: its frozen target list minus inputs of failed batches.
+pub struct Coverage {
+    targets: Vec<Target>,
+    failed: BTreeSet<String>,
+}
+
+impl Coverage {
+    pub fn new(targets: &[Target], failed_ranges: &[(u64, u64)]) -> Self {
+        let failed = failed_ranges
+            .iter()
+            .flat_map(|&(offset, n)| input::slice(targets, offset as u128, n as usize))
+            .collect();
+        Self { targets: targets.to_vec(), failed }
+    }
+
+    pub async fn load(db: &PgPool, run_id: Uuid) -> sqlx::Result<Self> {
+        let (targets, stats): (Option<sqlx::types::Json<Vec<Target>>>, sqlx::types::Json<RunStats>) =
+            sqlx::query_as("SELECT target_snapshot, stats FROM scan_runs WHERE id = $1")
+                .bind(run_id)
+                .fetch_one(db)
+                .await?;
+        Ok(Self::new(&targets.map(|t| t.0).unwrap_or_default(), &stats.0.failed_ranges))
+    }
+
+    pub fn covers(&self, ip: &str, hostname: Option<&str>) -> bool {
+        input::contains(&self.targets, ip, hostname)
+            && !self.failed.contains(ip)
+            && hostname.is_none_or(|h| !self.failed.contains(h))
+    }
+}
+
+/// Addresses of either run that are not covered by both.
+fn not_comparable(a: &Loaded, b: &Loaded, cov_a: &Coverage, cov_b: &Coverage) -> BTreeSet<String> {
+    let hostname = |ip: &String| {
+        b.hostnames.get(ip).cloned().flatten().or_else(|| a.hostnames.get(ip).cloned().flatten())
+    };
+    a.snapshot
+        .hosts
+        .keys()
+        .chain(b.snapshot.hosts.keys())
+        .filter(|ip| {
+            let h = hostname(ip);
+            !(cov_a.covers(ip, h.as_deref()) && cov_b.covers(ip, h.as_deref()))
+        })
+        .cloned()
+        .collect()
 }
 
 /// Previous finished run of the same scan.
@@ -258,8 +314,8 @@ fn flatten(prefix: &str, v: &Value, out: &mut BTreeMap<String, String>) {
     }
 }
 
-/// Hosts/ports of the previous run that are missing now (within current targets).
-fn recheck_inputs(prev: &Loaded, cur: &Loaded, targets: &[Target]) -> Vec<String> {
+/// Hosts/ports of the previous run that are missing now (within what this run covers).
+fn recheck_inputs(prev: &Loaded, cur: &Loaded, coverage: &Coverage) -> Vec<String> {
     let ports = |s: &Snapshot| -> BTreeMap<String, BTreeSet<u16>> {
         let mut m: BTreeMap<String, BTreeSet<u16>> = BTreeMap::new();
         for o in s.observations.iter().filter(|o| o.kind == Kind::Service) {
@@ -274,7 +330,7 @@ fn recheck_inputs(prev: &Loaded, cur: &Loaded, targets: &[Target]) -> Vec<String
             continue; // already scanned in the main batches; no extra probing
         }
         let hostname = prev.hostnames.get(ip).cloned().flatten();
-        if !input::contains(targets, ip, hostname.as_deref()) {
+        if !coverage.covers(ip, hostname.as_deref()) {
             continue;
         }
         let now_active = cur.snapshot.hosts.get(ip).is_some_and(|c| c.state == "active");
@@ -296,8 +352,13 @@ pub async fn finalize(
     stats: &mut RunStats,
     deadline: Option<DateTime<Utc>>,
 ) {
-    if let Err(e) = finalize_inner(state, scan, run_id, targets, stats, deadline).await {
-        stats.error(format!("diff: {e:#}"));
+    // The analysis outcome is visible on its own (F-21); it never changes the scan status.
+    match finalize_inner(state, scan, run_id, targets, stats, deadline).await {
+        Ok(()) => {}
+        Err(e) => {
+            stats.analysis = Some("failed".into());
+            stats.error(format!("diff: {e:#}"));
+        }
     }
 }
 
@@ -313,13 +374,16 @@ async fn finalize_inner(
     let key = state.config.data_key.as_str();
     let Some(prev_id) = previous_run(db, run_id).await? else {
         stats.diff = Some(DiffSummary::default()); // first run: nothing to compare
+        stats.analysis = Some("baseline".into());
         return Ok(());
     };
     let prev = load(db, prev_id, key).await?;
     let cur = load(db, run_id, key).await?;
+    let cov_prev = Coverage::load(db, prev_id).await?;
+    let cov_cur = Coverage::new(targets, &stats.failed_ranges);
 
     // 1) Re-check what disappeared, if the window leaves time for it.
-    let inputs = recheck_inputs(&prev, &cur, targets);
+    let inputs = recheck_inputs(&prev, &cur, &cov_cur);
     let missing_before: BTreeSet<String> = prev
         .snapshot
         .hosts
@@ -345,7 +409,7 @@ async fn finalize_inner(
         .hosts
         .keys()
         .filter(|ip| !cur.snapshot.hosts.contains_key(*ip))
-        .filter(|ip| input::contains(targets, ip, prev.hostnames.get(*ip).cloned().flatten().as_deref()))
+        .filter(|ip| cov_cur.covers(ip, prev.hostnames.get(*ip).cloned().flatten().as_deref()))
         .cloned()
         .collect();
     // Hosts that were missing after the main batches but answered the re-check.
@@ -381,9 +445,11 @@ async fn finalize_inner(
 
     // 3) Diff and store.
     let cur = load(db, run_id, key).await?;
-    let entries = diff::diff(&prev.snapshot, &cur.snapshot, scan.inactive_after_misses);
+    let skip = not_comparable(&prev, &cur, &cov_prev, &cov_cur);
+    let entries = diff::diff(&prev.snapshot, &cur.snapshot, scan.inactive_after_misses, &skip);
     store(db, prev_id, run_id, &entries, key).await?;
-    stats.diff = Some(DiffSummary::of(Some(prev_id), &entries));
+    stats.diff = Some(DiffSummary { not_comparable: skip.len() as u64, ..DiffSummary::of(Some(prev_id), &entries) });
+    stats.analysis = Some("complete".into());
     tracing::info!(%run_id, against = %prev_id, entries = entries.len(), "diff stored");
     Ok(())
 }
@@ -418,16 +484,21 @@ async fn store(db: &PgPool, run_a: Uuid, run_b: Uuid, entries: &[DiffEntry], key
     tx.commit().await
 }
 
-/// Compare any two runs on demand (not stored).
-pub async fn compare(db: &PgPool, run_a: Uuid, run_b: Uuid, key: &str) -> sqlx::Result<Vec<DiffEntry>> {
+/// Compare any two runs on demand (not stored). Returns entries and the number of
+/// addresses skipped as not comparable. `RowNotFound` if a run does not exist.
+pub async fn compare(db: &PgPool, run_a: Uuid, run_b: Uuid, key: &str) -> sqlx::Result<(Vec<DiffEntry>, usize)> {
+    // Threshold of run B as frozen at its start (falls back to the scan for old runs).
     let threshold: i32 = sqlx::query_scalar(
-        "SELECT s.inactive_after_misses FROM scans s JOIN scan_runs r ON r.scan_id = s.id WHERE r.id = $1",
+        "SELECT COALESCE((r.config_snapshot->>'inactive_after_misses')::int, s.inactive_after_misses)
+         FROM scan_runs r JOIN scans s ON s.id = r.scan_id WHERE r.id = $1",
     )
     .bind(run_b)
     .fetch_one(db)
     .await?;
+    let (cov_a, cov_b) = (Coverage::load(db, run_a).await?, Coverage::load(db, run_b).await?);
     let (a, b) = (load(db, run_a, key).await?, load(db, run_b, key).await?);
-    Ok(diff::diff(&a.snapshot, &b.snapshot, threshold))
+    let skip = not_comparable(&a, &b, &cov_a, &cov_b);
+    Ok((diff::diff(&a.snapshot, &b.snapshot, threshold, &skip), skip.len()))
 }
 
 #[cfg(test)]
@@ -452,6 +523,17 @@ mod tests {
             cookies: Some(cookies),
             tls: Some(json!({"subject_cn": "a.example", "not_after": "2027-01-01", "timestamp": "x", "san": ["b", "a"]})),
         }
+    }
+
+    #[test]
+    fn coverage_excludes_failed_batches_and_other_targets() {
+        let targets = vec![input::normalize("10.0.0.0/29").unwrap(), input::normalize("example.com").unwrap()];
+        // Inputs 2..4 (10.0.0.3, 10.0.0.4) failed.
+        let cov = Coverage::new(&targets, &[(2, 2)]);
+        assert!(cov.covers("10.0.0.1", None));
+        assert!(!cov.covers("10.0.0.3", None), "failed batch is not covered");
+        assert!(!cov.covers("10.0.0.9", None), "outside the targets");
+        assert!(cov.covers("93.184.215.14", Some("example.com")), "domain target by hostname");
     }
 
     #[test]

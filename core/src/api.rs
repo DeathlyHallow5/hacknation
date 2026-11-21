@@ -265,27 +265,56 @@ async fn create_scan(State(s): State<AppState>, Json(b): Json<CreateScan>) -> Ap
     .await
     .map_err(internal)?
     .rows_affected();
+    // Size cap on the whole scan (F-12), incl. targets linked by id.
+    let linked_targets: Vec<(input::TargetKind, String)> = sqlx::query_as(
+        "SELECT t.kind, t.value FROM targets t JOIN scan_targets st ON st.target_id = t.id WHERE st.scan_id = $1",
+    )
+    .bind(scan_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let linked_targets: Vec<input::Target> =
+        linked_targets.into_iter().map(|(kind, value)| input::Target { kind, value }).collect();
+    let total = input::total_hosts(&linked_targets);
+    if total > input::MAX_SCAN_HOSTS {
+        return Err(bad(format!("scan covers {total} addresses, maximum is {}", input::MAX_SCAN_HOSTS)));
+    }
     tx.commit().await.map_err(internal)?;
 
     Ok(Json(json!({
         "id": scan_id,
         "targets": linked,
-        "hosts": input::total_hosts(&targets).to_string(),
+        "hosts": total.to_string(),
         "errors": parse_errors(&errors),
         "scheduled": b.start,
     })))
 }
 
 async fn run_now(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Value> {
-    let n = sqlx::query("UPDATE scans SET next_run_at = now(), enabled = true WHERE id = $1")
+    let active: Option<Option<Uuid>> = sqlx::query_scalar(
+        "SELECT (SELECT r.id FROM scan_runs r WHERE r.scan_id = s.id AND r.status IN ('queued', 'running', 'paused'))
+         FROM scans s WHERE s.id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&s.db)
+    .await
+    .map_err(internal)?;
+    match active {
+        None => return Err(not_found()),
+        // One active run per scan: starting another would be silently ignored.
+        Some(Some(run)) => {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(json!({ "detail": "scan already has an active run", "run_id": run })),
+            ))
+        }
+        Some(None) => {}
+    }
+    sqlx::query("UPDATE scans SET next_run_at = now(), enabled = true WHERE id = $1")
         .bind(id)
         .execute(&s.db)
         .await
-        .map_err(internal)?
-        .rows_affected();
-    if n == 0 {
-        return Err(not_found());
-    }
+        .map_err(internal)?;
     Ok(Json(json!({ "id": id, "scheduled": true })))
 }
 
@@ -296,7 +325,7 @@ struct RunRow {
     id: Uuid,
     scan_id: Uuid,
     status: String,
-    checkpoint: i32,
+    checkpoint: i64,
     total_batches: Option<i32>,
     started_at: chrono::DateTime<chrono::Utc>,
     window_started_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -478,9 +507,15 @@ struct DiffRow {
 /// comparison with `?against=<run_id>`. Sorted by interest (3 = most important) first.
 async fn run_diff(State(s): State<AppState>, Path(id): Path<Uuid>, Query(q): Query<DiffQuery>) -> ApiResult<Value> {
     let key = s.config.data_key.as_str();
+    let not_comparable: Option<u64>;
     let (against, entries): (Option<Uuid>, Vec<Value>) = match q.against {
         Some(a) => {
-            let entries: Vec<DiffEntry> = history::compare(&s.db, a, id, key).await.map_err(internal)?;
+            let (entries, skipped): (Vec<DiffEntry>, usize) =
+                history::compare(&s.db, a, id, key).await.map_err(|e| match e {
+                    sqlx::Error::RowNotFound => not_found(),
+                    e => internal(e),
+                })?;
+            not_comparable = Some(skipped as u64);
             (Some(a), entries.iter().map(|e| serde_json::to_value(e).unwrap_or_default()).collect())
         }
         None => {
@@ -499,6 +534,15 @@ async fn run_diff(State(s): State<AppState>, Path(id): Path<Uuid>, Query(q): Que
                 Some(r) => Some(r.run_a),
                 None => history::previous_run(&s.db, id).await.map_err(internal)?,
             };
+            not_comparable = sqlx::query_scalar::<_, Option<i64>>(
+                "SELECT (stats->'diff'->>'not_comparable')::bigint FROM scan_runs WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_optional(&s.db)
+            .await
+            .map_err(internal)?
+            .flatten()
+            .map(|n| n as u64);
             let entries = rows
                 .into_iter()
                 .map(|r| json!({
@@ -517,6 +561,8 @@ async fn run_diff(State(s): State<AppState>, Path(id): Path<Uuid>, Query(q): Que
         "summary": {
             "new": count("new"), "gone": count("gone"), "changed": count("changed"),
             "important": entries.iter().filter(|e| e["interest"].as_i64() >= Some(3)).count(),
+            // Addresses not covered by both runs: skipped, not reported as new/gone.
+            "not_comparable": not_comparable,
         },
         "entries": entries,
     })))
