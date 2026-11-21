@@ -1,6 +1,7 @@
 """Run the 10k+ benchmark scan and check accuracy against the plan.
-Usage: python -I -X utf8 bench_run.py <.env> <plan.json> <label> <ports> <rate> <batch_prefix> [api base]"""
-import http.cookiejar, json, subprocess, sys, time, urllib.error, urllib.request
+Usage: BENCH_NOTE="what changed" python -I -X utf8 bench_run.py <.env> <plan.json> <label> <ports> <rate> <batch_prefix> [api base]
+The result is recorded in docs/benchmarks/ (history.csv + full JSON)."""
+import http.cookiejar, json, os, subprocess, sys, time, urllib.error, urllib.request
 
 env_path, plan_path, label, ports, rate, prefix = sys.argv[1:7]
 ENV = dict(l.strip().split("=", 1) for l in open(env_path, encoding="utf-8") if "=" in l and not l.startswith("#"))
@@ -86,5 +87,10 @@ http_ok = sum(1 for ip, kind in expected.items() if kind != "redis" and ip in fo
 web = sum(1 for k in expected.values() if k != "redis")
 print(f"ACCURACY {label}: hosts found {len(expected)-len(missing)}/{len(expected)}, extra (not planned) {len(extra)} {extra[:5]}, "
       f"expected port open {svc_ok}/{len(expected)}, product identified {ver_ok}/{len(expected)}, http fingerprint {http_ok}/{web}")
-json.dump({"label": label, "run": r, "samples": samples, "missing": missing, "extra": extra, "svc_ok": svc_ok, "ver_ok": ver_ok, "http_ok": http_ok,
-           "wall": total}, open(f"bench_{label}.json", "w"), default=str)
+result = {"label": label, "ports": ports, "rate": int(rate), "run": r, "samples": samples, "missing": missing, "extra": extra,
+          "svc_ok": svc_ok, "ver_ok": ver_ok, "http_ok": http_ok, "wall": total}
+# Every run goes to the journal (docs/benchmarks/), so we can show how the scanner changed.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from record import record  # noqa: E402
+
+record(plan, result, ports, int(rate), os.environ.get("BENCH_NOTE", ""))

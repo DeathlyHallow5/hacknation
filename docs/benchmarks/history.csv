@@ -1,0 +1,3 @@
+date,commit,label,note,status,addresses,covered_pct,ports,rate_pps,wall_s,addr_per_s,hosts_planned,hosts_found,port_ok,product_ok,http_ok,http_planned,extra_hosts,cpu_max_pct,mem_max,file
+2026-11-21 22:07,435db79,p8r1000,before fix: pre-flight nmap -sn with default retries; cancelled at 59%,cancelled,16382,59.1,"22,80,443,3306,5432,6379,8080,8443",1000,1983,4.9,89,89,89,89,77,77,10.77.0.1 10.77.31.188,109,98.98MiB,2026-11-21-2207-p8r1000.json
+2026-11-21 23:03,3602605,p8r1000v2,pre-flight -T4 --max-retries 0,completed,16382,100.0,"22,80,443,3306,5432,6379,8080,8443",1000,476,34.4,160,160,160,160,140,140,10.77.0.1,148,164.4MiB,2026-11-21-2303-p8r1000v2.json
