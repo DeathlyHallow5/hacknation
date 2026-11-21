@@ -1033,7 +1033,8 @@ pub async fn list_scans(State(s): State<AppState>, Query(q): Query<PageQuery>) -
     let runs = load_runs(&s.db, "", 5000).await?;
     let mut items: Vec<Value> = runs.iter().map(run_json).collect();
     if let Some(st) = opt(&q.status) {
-        items.retain(|r| r["status"] == st);
+        let wanted: Vec<&str> = st.split(',').map(str::trim).collect();
+        items.retain(|r| r["status"].as_str().is_some_and(|s| wanted.contains(&s)));
     }
     Ok(Json(paginated(items, q.page, q.page_size)))
 }
@@ -1092,7 +1093,6 @@ struct ObsRow {
     ip: String,
     hostname: Option<String>,
     state: String,
-    miss_count: i32,
     first_seen_at: DateTime<Utc>,
     seen_at: DateTime<Utc>,
     service_id: Uuid,
@@ -1141,7 +1141,7 @@ async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Finding>> {
     let rows = sqlx::query_as::<_, ObsRow>(sqlx::AssertSqlSafe(format!(
         "WITH latest AS ({LATEST})
          SELECT l.scan_id, l.id AS run_id, h.id AS host_id, host(h.address) AS ip, h.hostname, h.state::text AS state,
-                h.miss_count, h.first_seen_at, h.seen_at, s.id AS service_id, s.port, s.protocol, s.service, s.product,
+                h.first_seen_at, h.seen_at, s.id AS service_id, s.port, s.protocol, s.service, s.product,
                 s.version, s.confidence, f.url, f.title, f.technologies, f.is_admin, f.is_staging
          FROM latest l JOIN hosts h ON h.run_id = l.id JOIN services s ON s.host_id = h.id
          LEFT JOIN http_findings f ON f.service_id = s.id
@@ -1161,13 +1161,17 @@ async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Finding>> {
     .into_iter()
     .map(|(run, kind, entity, change)| ((run, kind, entity), change))
     .collect();
-    let runs_per_scan: HashMap<Uuid, i64> = sqlx::query_as::<_, (Uuid, i64)>(
-        "SELECT scan_id, count(*) FROM scan_runs WHERE status IN ('done', 'partial') GROUP BY scan_id",
+    // Per scan and address: finished runs that observed the host, and how many it answered.
+    let measured: HashMap<(Uuid, String), (i64, i64)> = sqlx::query_as::<_, (Uuid, String, i64, i64)>(
+        "SELECT r.scan_id, host(h.address), count(*) FILTER (WHERE h.state = 'active'), count(*)
+         FROM scan_runs r JOIN hosts h ON h.run_id = r.id
+         WHERE r.status IN ('done', 'partial') GROUP BY 1, 2",
     )
     .fetch_all(db)
     .await
     .map_err(fail)?
     .into_iter()
+    .map(|(scan, ip, up, total)| ((scan, ip), (up, total)))
     .collect();
     let states: HashMap<Uuid, StateRow> = sqlx::query_as::<_, StateRow>(
         "SELECT finding_id, status, score_override, assignee, tags, pgp_sym_decrypt(notes_enc, $1) AS notes
@@ -1219,7 +1223,7 @@ async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Finding>> {
             r.port,
             r.service.as_deref().map(str::to_uppercase).unwrap_or_else(|| r.protocol.to_uppercase())
         );
-        let total = *runs_per_scan.get(&r.scan_id).unwrap_or(&1);
+        let (responded, total) = measured.get(&(r.scan_id, r.ip.clone())).copied().unwrap_or((1, 1));
         let mut candidates: Vec<(&'static str, String, String, i32, Vec<Value>)> = Vec::new();
         if let Some(url) = &r.url {
             let title = r.title.clone().unwrap_or_else(|| url.clone());
@@ -1290,7 +1294,7 @@ async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Finding>> {
                 score_override: st.and_then(|s| s.score_override),
                 score_breakdown: breakdown,
                 confidence: r.confidence,
-                measurements: json!({ "responded": (total - i64::from(r.miss_count)).max(0), "total": total }),
+                measurements: json!({ "responded": responded, "total": total }),
                 evidence,
                 signature_id: None,
                 signature_name: None,

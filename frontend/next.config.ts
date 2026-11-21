@@ -8,6 +8,8 @@ import type { NextConfig } from "next";
  * between navigations.
  */
 const nextConfig: NextConfig = {
+  // Self-contained server for the Docker image (frontend/Dockerfile).
+  output: "standalone",
   poweredByHeader: false,
   turbopack: {
     rules: {

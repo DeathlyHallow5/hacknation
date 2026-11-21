@@ -11,21 +11,27 @@ HackNation, задание №3 (AGH). Циклическое discovery-скан
 |------|-----|---------------|
 | `core/` | Rust (axum + tokio + sqlx): API и оркестратор скана | A (ядро), B (данные/diff) |
 | `core/migrations/` | Схема PostgreSQL (pgcrypto, RBAC-роли, diffs, audit) | B |
-| `web/` | Next.js дашборд (перенесён из SWOT) + `/api` прокси на core | C |
+| `frontend/` | Next.js дашборд (контракт `/api/v1`, режимы `proxy`/`mock`) | C |
+| `web/` | старый UI из SWOT — compose его больше не использует | — |
 | `tools/` | Пиннутые версии ProjectDiscovery + установщик с проверкой SHA-256 | A |
-| `compose.yaml` | db + core + web, профиль `lab` — тестовые сервисы для демо | все |
+| `compose.yaml` | db + core + web (`frontend/`), профиль `lab` — тестовые сервисы для демо | все |
+| `docs/STATUS.md` | **что сейчас работает, а что нет** | все |
+| `docs/DEMO-VIDEO.md` | сценарий демо-видео | все |
 
 ## Запуск
 
 ```bash
 cp .env.example .env
 sed -i "s|^ASI_DATA_KEY=.*|ASI_DATA_KEY=$(openssl rand -base64 32)|" .env
+sed -i "s|^ASI_ADMIN_PASSWORD=.*|ASI_ADMIN_PASSWORD=$(openssl rand -base64 18)|" .env   # первый админ
 docker compose up --build -d                 # db + core + web
 docker compose --profile lab up -d           # + тестовая лаба 172.30.0.0/24
 ```
 
-- Дашборд: http://localhost:3000
-- API (http://localhost:8000/api):
+- Дашборд: http://localhost:3000 — вход `admin` / `ASI_ADMIN_PASSWORD` из `.env`.
+- API для дашборда: `/api/v1/...` (контракт — `frontend/src/lib/api/types.ts`, реализация — `core/src/v1.rs`).
+- API ядра (http://localhost:8000/api) — **всё, кроме `/health` и `/auth/login`, требует входа**
+  (`POST /api/auth/login` → `Authorization: Bearer <token>`; скрипты в `scripts/` входят сами через `scripts/_auth.sh`):
 
 | Метод | Путь | Что |
 |-------|------|-----|
@@ -38,6 +44,11 @@ docker compose --profile lab up -d           # + тестовая лаба 172.3
 | GET | `/runs/{id}/findings` | хосты (state, miss_count, flaps, first/last seen) → сервисы → HTTP-находки (расшифрованы) |
 | GET | `/runs/{id}/diff` | изменения vs предыдущий прогон: new/gone/changed, confidence, interest 1–3 (`?against=<run_id>` — с любым прогоном) |
 | POST | `/runs/{id}/cancel` | остановить прогон |
+| POST/GET | `/auth/login`, `/auth/logout`, `/auth/me` | сессии (cookie HttpOnly или Bearer; для записи по cookie — заголовок `X-ASI-CSRF: 1`) |
+| GET/POST/PATCH/DELETE | `/users`, `/users/{id}` | пользователи и роли (admin) |
+| GET | `/audit` | журнал аудита |
+| GET/PATCH/DELETE | `/scans/{id}`, `/targets/{id}` | правка и удаление |
+| GET/PUT/DELETE | `/scans/{id}/annotations…` | правки аналитика, переживающие пересканирование |
 
 ### Демо на лабе
 
@@ -100,10 +111,12 @@ CMS/админка/staging → Postgres (чувствительные поля �
 **Известные проблемы и план** — PROJECT.md §15 (реестр находок) и §17 (дорожная карта).
 До закрытия гейтов SEC/SCOPE не запускать вне изолированной лабы и не открывать API в сеть.
 
-Дальше (бэкенд): RBAC + логин, редактирование находок с сохранением между сканами, импорт/экспорт
-JSON/CSV, экспорт в DefectDojo (сырые выводы уже в `run_artifacts`), кастомные сигнатуры.
-Экраны фронта делает отдельный участник команды.
-Фронт пока UI SWOT — экраны переводятся на новый API (`/scanners` ещё не существует, это ожидаемо).
+**Авторизация, 4 роли RBAC, аудит, правки аналитика — готовы, проверены на лабе.** Дашборд (`frontend/`)
+подключён к ядру: вход, Pulpit и Zakresy работают на реальных данных.
+
+**Подробный и актуальный список «работает / не работает» — [docs/STATUS.md](docs/STATUS.md).**
+Дальше: страницы сканов/находок/изменений во фронте, запуск сканов из UI, кастомные сигнатуры,
+окна по часам, DefectDojo, бенчмарк 10k IP.
 
 ## Лицензия
 

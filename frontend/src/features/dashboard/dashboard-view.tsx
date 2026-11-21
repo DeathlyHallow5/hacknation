@@ -107,7 +107,17 @@ function WindowCard({ s }: { s: DashboardSummary }) {
   );
 }
 
-function Hero({ s, mapCidr, setMapCidr }: { s: DashboardSummary | undefined; mapCidr: string; setMapCidr: (c: string) => void }) {
+function Hero({
+  s,
+  mapCidr,
+  setMapCidr,
+  ranges,
+}: {
+  s: DashboardSummary | undefined;
+  mapCidr: string;
+  setMapCidr: (c: string) => void;
+  ranges: { cidr: string; label: string }[];
+}) {
   const running = s?.running_scan;
   return (
     <section className="chrome-dots on-chrome border-b border-chrome-line bg-chrome text-chrome-ink" aria-labelledby="hero-title">
@@ -200,8 +210,8 @@ function Hero({ s, mapCidr, setMapCidr }: { s: DashboardSummary | undefined; map
               aria-label="Zakres na mapie"
               className="h-8 w-56 border-chrome-line bg-chrome-raised text-[0.8125rem] text-chrome-ink"
               value={mapCidr}
-              onChange={(v) => setMapCidr(v || "10.0.0.0/16")}
-              options={MAP_RANGES.map((r) => ({ value: r.cidr, label: `${r.cidr} ${r.label}` }))}
+              onChange={(v) => setMapCidr(v || ranges[0].cidr)}
+              options={ranges.map((r) => ({ value: r.cidr, label: `${r.cidr} ${r.label}` }))}
             />
           </div>
           <HilbertMap cidr={mapCidr} size={392} />
@@ -226,7 +236,21 @@ export function DashboardView() {
   const qc = useQueryClient();
   const can = useCan();
   const download = useDownload();
-  const [mapCidr, setMapCidr] = React.useState("10.0.0.0/16");
+  // Map ranges: the CIDR targets being monitored (/16 or smaller); the built-in sample
+  // ranges only when there are none (e.g. the mock backend before any import).
+  const cidrTargets = useQuery({
+    queryKey: ["targets", "map-ranges"],
+    queryFn: () => api.targets.list({ type: "cidr", page_size: 50, sort: "value" }),
+    enabled: can("targets:read"),
+  });
+  const ranges = React.useMemo(() => {
+    const own = (cidrTargets.data?.items ?? [])
+      .filter((t) => !t.excluded && Number(t.value.split("/")[1]) >= 16 && !t.value.includes(":"))
+      .map((t) => ({ cidr: t.value, label: t.name ?? "" }));
+    return own.length ? own : MAP_RANGES;
+  }, [cidrTargets.data]);
+  const [pickedCidr, setMapCidr] = React.useState<string | null>(null);
+  const mapCidr = pickedCidr && ranges.some((r) => r.cidr === pickedCidr) ? pickedCidr : ranges[0].cidr;
   const [q, setQ] = React.useState("");
   const [change, setChange] = React.useState("");
   const [category, setCategory] = React.useState<FindingCategory | "">("");
@@ -252,7 +276,7 @@ export function DashboardView() {
 
   return (
     <>
-      <Hero s={summary.data} mapCidr={mapCidr} setMapCidr={setMapCidr} />
+      <Hero s={summary.data} mapCidr={mapCidr} setMapCidr={setMapCidr} ranges={ranges} />
       <Container className="grid gap-6 py-8">
         {summary.isError ? <ErrorState error={summary.error} onRetry={() => summary.refetch()} /> : null}
 

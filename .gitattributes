@@ -1,0 +1,7 @@
+# Keep LF everywhere: shell scripts run in Linux containers and sqlx checksums
+# migrations byte for byte, so a CRLF checkout on Windows would break both.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary
+*.ico binary

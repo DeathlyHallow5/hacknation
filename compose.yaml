@@ -43,15 +43,18 @@ services:
     cap_drop:
       - ALL
 
+  # Dashboard (frontend/, Next.js). `proxy` sends every /api/v1 call to the Rust core;
+  # ASI_API_MODE=mock runs it on its built-in demo data instead.
   web:
     build:
-      context: ./web
+      context: ./frontend
     init: true
     restart: unless-stopped
     ports:
       - "127.0.0.1:${ASI_WEB_PORT:-3000}:3000"
     environment:
-      ASI_API_INTERNAL_URL: http://core:8000
+      ASI_API_MODE: ${ASI_API_MODE:-proxy}
+      ASI_API_URL: http://core:8000
     depends_on:
       core:
         condition: service_healthy
