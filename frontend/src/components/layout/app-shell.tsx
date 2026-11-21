@@ -21,7 +21,7 @@ function Footer() {
         <span>Wersja {meta?.version ?? "0.1.0"}</span>
         <span className="ml-auto inline-flex items-center gap-2">
           <span
-            className={`size-2 rounded-full ${meta?.mode === "mock" ? "bg-unstable" : "bg-new"}`}
+            className={`size-2 rounded-full ${meta?.mode === "mock" ? "bg-unstable" : "bg-active"}`}
             aria-hidden
           />
           {meta?.mode === "mock"
@@ -70,8 +70,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const unauthorized = session.error instanceof ApiError && session.error.status === 401;
     return (
       <div className="grid min-h-dvh place-items-center bg-canvas p-6">
-        <div className="grid max-w-md gap-3 rounded-2xl border border-line bg-surface p-6">
-          <h1 className="text-lg font-bold">{unauthorized ? "Sesja wygasła" : "Nie udało się połączyć z API"}</h1>
+        <div className="grid max-w-md gap-3 rounded-xl border border-line bg-surface p-6">
+          <h1 className="text-lg font-semibold">{unauthorized ? "Sesja wygasła" : "Nie udało się połączyć z API"}</h1>
           <p className="text-sm text-ink-2">
             {unauthorized
               ? "Zaloguj się ponownie, aby kontynuować pracę."

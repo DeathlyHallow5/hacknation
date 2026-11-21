@@ -9,7 +9,7 @@ import { ErrorState, Guard, ManualOverrideBadge, MonoValue, TagInput } from "@/c
 import { ChangeChip, ConfidenceMeter, FindingStatusChip, ScoreMeter } from "@/components/data/status";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/form-controls";
-import { Chip, Skeleton } from "@/components/ui/misc";
+import { Skeleton } from "@/components/ui/misc";
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/overlays";
 import { SimpleSelect } from "@/components/ui/select";
 import { errorMessage } from "@/lib/api/client";
@@ -37,8 +37,8 @@ export function EvidenceList({ items }: { items: Evidence[] }) {
   return (
     <ul className="grid gap-2">
       {items.map((e, i) => (
-        <li key={i} className="rounded-lg border border-line bg-surface-2 p-3">
-          <div className="mb-1.5 text-xs font-semibold text-ink-2">{e.label}</div>
+        <li key={i} className="rounded-lg bg-surface-2 p-3 contrast:border contrast:border-line">
+          <div className="mb-1.5 text-xs text-ink-2">{e.label}</div>
           <code className="mono block text-sm leading-relaxed break-all whitespace-pre-wrap text-ink">
             <Highlighted text={e.snippet} highlight={e.highlight} />
           </code>
@@ -150,15 +150,15 @@ export function FindingDrawer({ id, onOpenChange }: { id: string | null; onOpenC
         <SheetHeader>
           {f ? (
             <>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                 <ChangeChip state={f.change} measurements={f.measurements} />
                 <FindingStatusChip value={f.status} />
-                <Chip tone="outline">{FINDING_CATEGORY_LABEL[f.category]}</Chip>
+                <span className="text-sm text-ink-2">{FINDING_CATEGORY_LABEL[f.category]}</span>
               </div>
               <SheetTitle className="mt-1">{f.title}</SheetTitle>
               <SheetDescription asChild>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <MonoValue value={`${f.ip}${f.port ? `:${f.port}` : ""}`} className="font-semibold text-ink" />
+                  <MonoValue value={`${f.ip}${f.port ? `:${f.port}` : ""}`} className="font-medium text-ink" />
                   {f.hostname ? <span className="truncate">{f.hostname}</span> : null}
                 </div>
               </SheetDescription>
@@ -176,29 +176,33 @@ export function FindingDrawer({ id, onOpenChange }: { id: string | null; onOpenC
           {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}
           {f ? (
             <div className="grid gap-7">
-              <section className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <div className="grid gap-1">
-                  <span className="text-xs font-semibold text-ink-2">Priorytet</span>
-                  <ScoreMeter score={f.score_override ?? f.score} overridden={f.score_override !== null} />
+              <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <div className="grid content-start gap-1">
+                  <dt className="text-xs text-ink-2">Priorytet</dt>
+                  <dd>
+                    <ScoreMeter score={f.score_override ?? f.score} overridden={f.score_override !== null} />
+                  </dd>
                 </div>
-                <div className="grid gap-1">
-                  <span className="text-xs font-semibold text-ink-2">Pewność</span>
-                  <ConfidenceMeter value={f.confidence} compact />
+                <div className="grid content-start gap-1">
+                  <dt className="text-xs text-ink-2">Pewność</dt>
+                  <dd>
+                    <ConfidenceMeter value={f.confidence} compact />
+                  </dd>
                 </div>
-                <div className="grid gap-1">
-                  <span className="text-xs font-semibold text-ink-2">Pomiary</span>
-                  <span className="text-sm font-semibold">
+                <div className="grid content-start gap-1">
+                  <dt className="text-xs text-ink-2">Pomiary</dt>
+                  <dd className="tabular text-sm">
                     {f.measurements.responded}/{f.measurements.total} odpowiedzi
-                  </span>
+                  </dd>
                 </div>
-                <div className="grid gap-1">
-                  <span className="text-xs font-semibold text-ink-2">Pierwsze wykrycie</span>
-                  <span className="text-sm">{fmtSmart(f.first_seen)}</span>
+                <div className="grid content-start gap-1">
+                  <dt className="text-xs text-ink-2">Pierwsze wykrycie</dt>
+                  <dd className="text-sm">{fmtSmart(f.first_seen)}</dd>
                 </div>
-              </section>
+              </dl>
 
               <section className="grid gap-2.5">
-                <h3 className="text-sm font-bold">Dowody</h3>
+                <h3 className="text-sm font-semibold">Dowody</h3>
                 <EvidenceList items={f.evidence} />
                 {f.signature_name ? (
                   <p className="text-sm text-ink-2">
@@ -208,15 +212,15 @@ export function FindingDrawer({ id, onOpenChange }: { id: string | null; onOpenC
               </section>
 
               <section className="grid gap-2.5">
-                <h3 className="text-sm font-bold">Dlaczego taki priorytet?</h3>
+                <h3 className="text-sm font-semibold">Dlaczego taki priorytet?</h3>
                 <ul className="grid gap-1.5 rounded-lg border border-line p-3 text-sm">
                   {f.score_breakdown.map((b) => (
                     <li key={b.factor} className="flex items-center justify-between gap-3">
                       <span>{b.factor}</span>
-                      <span className="tabular font-bold">+{b.points}</span>
+                      <span className="tabular">+{b.points}</span>
                     </li>
                   ))}
-                  <li className="mt-1 flex items-center justify-between gap-3 border-t border-line pt-2 font-bold">
+                  <li className="mt-1 flex items-center justify-between gap-3 border-t border-line pt-2 font-semibold">
                     <span>Razem (maks. 99)</span>
                     <span className="tabular">{f.score}</span>
                   </li>
@@ -224,18 +228,14 @@ export function FindingDrawer({ id, onOpenChange }: { id: string | null; onOpenC
               </section>
 
               {f.technologies.length ? (
-                <section className="grid gap-2">
-                  <h3 className="text-sm font-bold">Technologie</h3>
-                  <div className="flex flex-wrap gap-1.5">
-                    {f.technologies.map((t) => (
-                      <Chip key={t}>{t}</Chip>
-                    ))}
-                  </div>
+                <section className="grid gap-1.5">
+                  <h3 className="text-sm font-semibold">Technologie</h3>
+                  <p className="text-sm text-ink">{f.technologies.join(", ")}</p>
                 </section>
               ) : null}
 
               <section className="grid gap-3 border-t border-line pt-6">
-                <h3 className="text-sm font-bold">Ocena i obsługa</h3>
+                <h3 className="text-sm font-semibold">Ocena i obsługa</h3>
                 <EditForm key={f.id + JSON.stringify(f.manual_overrides)} f={f} />
               </section>
 

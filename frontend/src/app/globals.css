@@ -79,6 +79,7 @@
   --map-unstable: #c4860f;
   --map-inactive: #34425b;
   --map-excluded: #2a3550;
+  --map-grid: rgba(11, 24, 48, 0.55);
 
   /* Sequential ramp (one hue, light -> dark) for magnitudes, e.g. the heatmap. */
   --seq-0: #eef4fb;
@@ -210,6 +211,7 @@
   --map-active: #6fa8ff;
   --map-inactive: #8a8a8a;
   --map-excluded: #444444;
+  --map-grid: rgba(0, 0, 0, 0.6);
 
   --shadow-pop: 0 0 0 2px #ffffff;
 }

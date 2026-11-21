@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Accessibility, ChevronDown, LogOut, Menu, Search, ShieldCheck, UserRoundCog } from "lucide-react";
+import { ChevronDown, LogOut, Menu, Search, ShieldCheck, UserRoundCog } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as React from "react";
@@ -57,7 +57,7 @@ function LiveScanPill() {
   return (
     <Link
       href={`/scans/${scan.id}`}
-      className="hidden h-9 items-center gap-2 rounded-full border border-chrome-line bg-chrome-raised px-3 text-sm font-semibold text-chrome-ink transition-colors hover:border-accent md:inline-flex"
+      className="hidden h-9 items-center gap-2 rounded-lg border border-chrome-line bg-chrome-raised px-3 text-sm font-semibold text-chrome-ink transition-colors hover:border-accent md:inline-flex"
       title="Przejdź do skanowania w toku"
     >
       <span className={cn("size-2 rounded-full", running ? "animate-pulse-dot bg-accent" : "bg-unstable")} aria-hidden />
@@ -75,14 +75,12 @@ function A11yMenu() {
     <Popover>
       <PopoverTrigger asChild>
         <Button variant="chrome" size="sm" className="h-9 px-2.5" aria-label="Ustawienia dostępności: rozmiar tekstu, kontrast, motyw">
-          <span aria-hidden className="text-[0.9375rem] leading-none font-extrabold">A+</span>
+          <span aria-hidden className="text-base leading-none font-semibold">A+</span>
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-4">
         <div className="grid gap-4">
-          <div className="flex items-center gap-2 text-sm font-bold">
-            <Accessibility className="size-4 text-link" aria-hidden /> Dostępność
-          </div>
+          <h2 className="text-sm font-semibold">Dostępność</h2>
           <div className="grid gap-1.5">
             <span className="text-sm font-semibold text-ink-2">Rozmiar tekstu</span>
             <Segmented
@@ -138,9 +136,10 @@ function UserMenu() {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-9 items-center gap-2 rounded-full border border-chrome-line bg-chrome-raised py-1 pr-2.5 pl-1 text-left text-chrome-ink transition-colors hover:border-accent"
+          className="inline-flex h-9 items-center gap-2 rounded-lg border border-chrome-line bg-chrome-raised py-1 pr-2.5 pl-1 text-left text-chrome-ink transition-colors hover:border-accent"
         >
-          <span className="grid size-7 place-items-center rounded-full bg-accent text-xs font-extrabold text-accent-ink">
+          {/* The avatar is identity, not an action: navy line colour, not the action cyan. */}
+          <span className="grid size-7 place-items-center rounded-full bg-chrome-line text-xs font-semibold text-chrome-ink contrast:bg-transparent contrast:ring-1 contrast:ring-white">
             {initials(session.user.name)}
           </span>
           <span className="hidden leading-tight lg:grid">
@@ -152,11 +151,9 @@ function UserMenu() {
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-72">
         <div className="grid gap-0.5 px-2.5 py-2">
-          <span className="text-sm font-bold">{session.user.name}</span>
+          <span className="text-sm font-semibold">{session.user.name}</span>
           <span className="text-sm text-ink-2">{session.user.email}</span>
-          <span className="mt-1 inline-flex w-fit items-center gap-1 rounded-md bg-accent/12 px-1.5 py-0.5 text-xs font-semibold text-link">
-            <ShieldCheck className="size-3.5" aria-hidden /> {session.role.name}
-          </span>
+          <span className="text-sm text-ink-2">Rola: {session.role.name}</span>
         </div>
         {can("roles:read") ? (
           <>
@@ -269,18 +266,19 @@ export function TopBar({ onOpenSearch }: { onOpenSearch: () => void }) {
     <header className="sticky top-0 z-40 bg-chrome text-chrome-ink">
       <div className="mx-auto flex h-14 max-w-[1440px] items-center gap-3 px-4 sm:px-6 lg:px-8">
         <MobileNav pathname={pathname} />
-        <Link href="/" className="shrink-0 rounded-md" aria-label="CBI AGH — Attack Surface Intelligence, strona główna">
+        <Link href="/" className="shrink-0 rounded-md" aria-label="Strona główna: CBI AGH, Attack Surface Intelligence">
           <Wordmark />
         </Link>
-        <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+        {/* Search takes whatever room is left (up to 20rem) instead of a fixed width, so the bar never overflows. */}
+        <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1.5 sm:gap-2">
           <button
             type="button"
             onClick={onOpenSearch}
-            className="hidden h-9 w-72 items-center gap-2 rounded-lg border border-chrome-line bg-chrome-raised px-3 text-left text-sm text-chrome-ink-2 transition-colors hover:border-accent md:flex xl:w-80"
+            className="hidden h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-chrome-line bg-chrome-raised px-3 text-left text-sm text-chrome-ink-2 transition-colors hover:border-accent md:flex md:max-w-72 xl:max-w-80"
           >
-            <Search className="size-4" aria-hidden />
-            <span className="flex-1 truncate">Szukaj adresu IP, domeny lub hosta…</span>
-            <Kbd>Ctrl K</Kbd>
+            <Search className="size-4 shrink-0" aria-hidden />
+            <span className="min-w-0 flex-1 truncate">Szukaj adresu IP, domeny lub hosta…</span>
+            <Kbd className="hidden shrink-0 lg:inline-flex">Ctrl K</Kbd>
           </button>
           <Button variant="chrome-ghost" size="icon" className="md:hidden" aria-label="Szukaj" onClick={onOpenSearch}>
             <Search />

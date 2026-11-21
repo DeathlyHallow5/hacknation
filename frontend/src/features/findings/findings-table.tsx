@@ -8,7 +8,6 @@ import { MonoValue } from "@/components/data/bits";
 import { DataTable, type Column } from "@/components/data/data-table";
 import { ChangeChip, ConfidenceMeter, FindingStatusChip, ScoreMeter } from "@/components/data/status";
 import { Button } from "@/components/ui/button";
-import { Chip } from "@/components/ui/misc";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/overlays";
 import { errorMessage } from "@/lib/api/client";
 import { api } from "@/lib/api/endpoints";
@@ -21,7 +20,7 @@ function RowActions({ f, onOpen, onChanged }: { f: Finding; onOpen: () => void; 
   const can = useCan();
   return (
     <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-      <Button size="sm" variant="secondary" onClick={onOpen}>
+      <Button size="sm" variant="ghost" onClick={onOpen}>
         Szczegóły
       </Button>
       <DropdownMenu>
@@ -109,35 +108,53 @@ export function FindingsTable({
 }) {
   const columns: Column<Finding>[] = [
     {
+      // Below xl one stacked column replaces address, port and description, so nothing is cut off.
+      // Phones also get status and priority here; tablets and laptops keep those as their own columns.
+      key: "summary",
+      header: "Znalezisko",
+      showBelow: "xl",
+      cell: (f) => (
+        <div className="grid min-w-0 gap-1">
+          <span className="line-clamp-2 font-semibold text-ink">{f.title}</span>
+          <span className="mono truncate text-sm text-ink-2">
+            {f.ip}
+            {f.port ? `:${f.port}` : ""}
+          </span>
+          {f.technologies.length ? <span className="hidden truncate text-xs text-ink-2 md:block">{f.technologies.join(", ")}</span> : null}
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1 md:hidden">
+            <ChangeChip state={f.change} measurements={f.measurements} />
+            <ScoreMeter score={f.score_override ?? f.score} overridden={f.score_override !== null} />
+          </span>
+        </div>
+      ),
+    },
+    {
       key: "address",
       header: "Adres IP / domena",
       sort: "ip",
+      hideBelow: "xl",
       cell: (f) => (
         <div className="grid min-w-0 gap-0.5">
-          <MonoValue value={`${f.ip}${f.port ? `:${f.port}` : ""}`} className="font-semibold text-ink" />
-          {f.hostname ? <span className="max-w-64 truncate text-xs text-ink-2">{f.hostname}</span> : null}
+          <MonoValue value={f.ip} className="font-medium text-ink" />
+          {f.hostname ? <span className="max-w-48 truncate text-xs text-ink-2" title={f.hostname}>{f.hostname}</span> : null}
         </div>
       ),
     },
     {
       key: "service",
       header: "Port / usługa",
-      hideBelow: "md",
+      hideBelow: "xl",
       cell: (f) => <span className="mono text-sm whitespace-nowrap text-ink">{f.service_label ?? "—"}</span>,
     },
     {
       key: "what",
       header: "Znalezisko i technologie",
       sort: "title",
+      hideBelow: "xl",
       cell: (f) => (
-        <div className="grid max-w-md min-w-56 gap-1">
+        <div className="grid max-w-sm min-w-56 gap-0.5" title={FINDING_CATEGORY_LABEL[f.category]}>
           <span className="font-semibold text-ink">{f.title}</span>
-          <span className="flex flex-wrap items-center gap-1">
-            <span className="text-xs text-ink-2">{FINDING_CATEGORY_LABEL[f.category]}</span>
-            {f.technologies.slice(0, 2).map((t) => (
-              <Chip key={t}>{t}</Chip>
-            ))}
-          </span>
+          {f.technologies.length ? <span className="truncate text-xs text-ink-2">{f.technologies.join(", ")}</span> : null}
         </div>
       ),
     },
@@ -145,6 +162,7 @@ export function FindingsTable({
       key: "change",
       header: "Status zmiany",
       sort: "change",
+      hideBelow: "md",
       cell: (f) => <ChangeChip state={f.change} measurements={f.measurements} />,
     },
     ...(showStatus
@@ -167,19 +185,22 @@ export function FindingsTable({
       key: "score",
       header: "Priorytet",
       sort: "score",
+      hideBelow: "md",
       cell: (f) => <ScoreMeter score={f.score_override ?? f.score} overridden={f.score_override !== null} />,
     },
     {
+      // One meter per row is enough: confidence is a plain percentage.
       key: "confidence",
       header: "Pewność",
       sort: "confidence",
       hideBelow: "xl",
-      cell: (f) => <ConfidenceMeter value={f.confidence} compact={false} />,
+      cell: (f) => <ConfidenceMeter value={f.confidence} compact valueClassName="text-ink-2" />,
     },
     {
       key: "actions",
-      header: <span className="sr-only">Akcje</span>,
+      header: "Akcje",
       headerClassName: "text-right",
+      hideBelow: "md",
       cell: (f) => <RowActions f={f} onOpen={() => onOpen(f.id)} onChanged={onChanged} />,
     },
   ];

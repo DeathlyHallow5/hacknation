@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Crosshair, Pencil, RefreshCw } from "lucide-react";
+import { ChevronDown, Pencil, RefreshCw } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { ErrorState, Guard, ManualOverrideBadge, MonoValue, TagInput, TagList } from "@/components/data/bits";
@@ -9,7 +9,7 @@ import { AvailabilityBadge, ChangeChip, ConfidenceMeter, ResponsePattern, ScoreM
 import { Container, PageHeader } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/form-controls";
-import { Chip, DefinitionList, Panel, Skeleton } from "@/components/ui/misc";
+import { DefinitionList, Panel, Skeleton } from "@/components/ui/misc";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/overlays";
 import { SimpleSelect } from "@/components/ui/select";
 import { FieldDiff } from "@/components/viz/bits";
@@ -53,7 +53,7 @@ function EditHostForm({ host, onOpenChange }: { host: Host; onOpenChange: (o: bo
       if (notes !== (host.notes ?? "")) body.notes = notes || null;
       return api.hosts.update(host.id, body);
     },
-    { success: "Zapisano — zmiany zostaną zachowane przy kolejnych skanach", invalidate: [["host", host.id], ["hosts"]], onSuccess: () => onOpenChange(false) },
+    { success: "Zapisano. Zmiany zostaną zachowane przy kolejnych skanach", invalidate: [["host", host.id], ["hosts"]], onSuccess: () => onOpenChange(false) },
   );
   return (
     <>
@@ -151,40 +151,48 @@ function FixServiceForm({ service, onClose, hostId }: { service: Service; onClos
 function ServiceCard({ s, onFix, defaultOpen }: { s: Service; onFix: () => void; defaultOpen: boolean }) {
   const [open, setOpen] = React.useState(defaultOpen);
   const isRedirect = s.http?.status_code === 301 && !s.http.technologies.some((t) => t.category !== "web_server");
+  /* A row of the services list, not a card: the panel is the only frame. */
   return (
-    <li id={`svc-${s.port}`} className="scroll-mt-32 rounded-xl border border-line bg-surface">
-      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-        <span className="mono w-24 shrink-0 text-sm font-bold">
+    <li id={`svc-${s.port}`} className="scroll-mt-32">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3">
+        <span className="mono w-24 shrink-0 text-sm font-semibold">
           {s.port}/{s.protocol}
         </span>
         <span className="grid min-w-0 flex-1 gap-0.5">
           <span className="flex flex-wrap items-center gap-2 font-semibold">
             {s.product ?? s.name}
             {s.version ? <span className="mono text-sm font-normal text-ink-2">{s.version}</span> : null}
+            {s.change !== "unchanged" ? <ChangeChip state={s.change} /> : null}
             <ManualOverrideBadge override={s.manual_overrides.version ?? s.manual_overrides.product} />
           </span>
-          <span className="text-xs text-ink-2">
+          <span className="text-xs text-pretty text-ink-2">
             {s.name}
             {s.tls ? ", TLS" : ""}
-            {s.http?.title && !isRedirect ? ` — „${s.http.title}”` : isRedirect ? " — przekierowanie na HTTPS" : ""}
+            {s.http?.title && !isRedirect ? `, „${s.http.title}”` : isRedirect ? ", przekierowanie na HTTPS" : ""}
+          </span>
+          {s.banner ? <span className="mono truncate text-xs text-ink-2">{s.banner}</span> : null}
+        </span>
+        {/* Fixed-width slots on the right, so confidence and actions line up from row to row. */}
+        <span className="flex shrink-0 items-center gap-2">
+          <span className="w-10 text-right" title="Pewność identyfikacji usługi">
+            <ConfidenceMeter value={s.confidence} compact valueClassName="text-ink-2" />
+          </span>
+          <Guard permission="assets:update">
+            <Button size="icon-sm" variant="ghost" aria-label={`Popraw identyfikację portu ${s.port}`} onClick={onFix}>
+              <Pencil />
+            </Button>
+          </Guard>
+          <span className="flex w-36 justify-end">
+            {s.http ? (
+              <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+                Odcisk HTTP <ChevronDown className={cn("transition-transform", open && "rotate-180")} />
+              </Button>
+            ) : null}
           </span>
         </span>
-        {s.change !== "unchanged" ? <ChangeChip state={s.change} /> : null}
-        <ConfidenceMeter value={s.confidence} compact />
-        <Guard permission="assets:update">
-          <Button size="icon-sm" variant="ghost" aria-label={`Popraw identyfikację portu ${s.port}`} onClick={onFix}>
-            <Pencil />
-          </Button>
-        </Guard>
-        {s.http ? (
-          <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-            Odcisk HTTP <ChevronDown className={cn("transition-transform", open && "rotate-180")} />
-          </Button>
-        ) : null}
       </div>
-      {s.banner ? <p className="mono border-t border-line px-4 py-2 text-xs text-ink-2">{s.banner}</p> : null}
       {open && s.http ? (
-        <div className="border-t border-line px-4 py-4">
+        <div className="px-5 pt-1 pb-5 sm:pl-[8.25rem]">
           <HttpFingerprintView http={s.http} serviceId={s.id} />
         </div>
       ) : null}
@@ -240,9 +248,10 @@ export function HostView({ id }: { id: string }) {
           <>
             <AvailabilityBadge value={h.availability} missCount={h.miss_count} />
             {h.change !== "unchanged" ? <ChangeChip state={h.change} /> : null}
-            <Chip tone="outline">{DEVICE_LABEL[h.device_type]}</Chip>
-            <Chip tone="outline">Krytyczność: {CRITICALITY_LABEL[h.criticality].toLowerCase()}</Chip>
-            <Chip tone="outline" className="mono">{h.subnet}</Chip>
+            {/* Facts are separated by hairlines, the same way everywhere, instead of a lone middle dot. */}
+            <span className="border-l border-line pl-3">{DEVICE_LABEL[h.device_type]}</span>
+            <span className="border-l border-line pl-3">Krytyczność: {CRITICALITY_LABEL[h.criticality].toLowerCase()}</span>
+            <span className="mono border-l border-line pl-3">{h.subnet}</span>
           </>
         }
         actions={
@@ -262,15 +271,15 @@ export function HostView({ id }: { id: string }) {
       />
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="grid gap-6">
-          <Panel title={`Usługi (${h.services.length})`} description="Rozpoznane porty i usługi. Rozwiń odcisk HTTP, aby zobaczyć nagłówki, ciasteczka, certyfikat i dowody wykrycia technologii.">
+          <Panel title={`Usługi (${h.services.length})`} flush>
             {h.services.length ? (
-              <ul className="grid gap-3">
+              <ul className="divide-y divide-line">
                 {h.services.map((s) => (
                   <ServiceCard key={s.id} s={s} onFix={() => setFixing(s)} defaultOpen={hash === `#svc-${s.port}` || (h.services.filter((x) => x.http).length === 1 && Boolean(s.http))} />
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-ink-2">Host odpowiada na ping, ale nie ma otwartych portów z profilu skanowania.</p>
+              <p className="px-5 py-4 text-sm text-ink-2">Host odpowiada na ping, ale nie ma otwartych portów z profilu skanowania.</p>
             )}
           </Panel>
           {can("findings:read") ? (
@@ -279,7 +288,6 @@ export function HostView({ id }: { id: string }) {
                 {(findings.data?.items ?? []).map((f) => (
                   <li key={f.id}>
                     <button type="button" onClick={() => setOpenFinding(f.id)} className="flex w-full items-center gap-3 px-5 py-3 text-left hover:bg-surface-2">
-                      <Crosshair className="size-4 shrink-0 text-ink-3" aria-hidden />
                       <span className="grid flex-1 gap-0.5">
                         <span className="font-semibold">{f.title}</span>
                         <span className="text-xs text-ink-2">
@@ -312,12 +320,14 @@ export function HostView({ id }: { id: string }) {
               ]}
             />
           </Panel>
-          <Panel title="Dostępność" description="Ostatnie pomiary, od najstarszego. Host jest oznaczany jako nieaktywny po 3 kolejnych skanach bez odpowiedzi.">
+          <Panel title="Dostępność" description="Od najstarszego pomiaru">
             <div className="grid gap-3">
               <ResponsePattern pattern={h.response_pattern} className="[&>span]:size-3" />
-              <p className="text-sm">
-                Odpowiedział w <strong>{h.response_pattern.filter(Boolean).length}</strong> z {h.response_pattern.length} pomiarów ({fmtPercent(h.response_pattern.filter(Boolean).length / h.response_pattern.length)}).
-                {h.miss_count ? ` Bez odpowiedzi od ${h.miss_count} ${h.miss_count === 1 ? "skanu" : "skanów"}.` : ""}
+              <p className="text-sm text-pretty">
+                Odpowiedział w <span className="font-semibold">{h.response_pattern.filter(Boolean).length}</span> z {h.response_pattern.length} pomiarów (
+                {fmtPercent(h.response_pattern.filter(Boolean).length / h.response_pattern.length)}).
+                {h.miss_count ? ` Bez odpowiedzi od ${h.miss_count} ${h.miss_count === 1 ? "skanu" : "skanów"}.` : ""} Host staje się nieaktywny po 3 kolejnych skanach bez
+                odpowiedzi.
               </p>
             </div>
           </Panel>
@@ -328,9 +338,22 @@ export function HostView({ id }: { id: string }) {
                   <span className={cn("mt-1 size-2.5 rounded-full", e.responded ? "bg-data" : "border-[1.5px] border-ink-3")} aria-hidden />
                   <div className="grid gap-1">
                     <span className="text-sm">
-                      <span className="font-semibold">Skan #{e.scan_number}</span> <span className="text-ink-2">— {fmtRelative(e.at)}</span>
+                      <span className="font-semibold">Skan #{e.scan_number}</span>
+                      <span className="text-ink-2">, {fmtRelative(e.at)}</span>
                     </span>
-                    <span className="text-xs text-ink-2">{e.responded ? (e.open_ports.length ? `Porty: ${e.open_ports.join(", ")}` : "Odpowiada") : "Brak odpowiedzi"}</span>
+                    <span className="text-xs text-ink-2">
+                      {e.responded ? (
+                        e.open_ports.length ? (
+                          <>
+                            Porty: <span className="mono text-ink">{e.open_ports.join(", ")}</span>
+                          </>
+                        ) : (
+                          "Odpowiada"
+                        )
+                      ) : (
+                        "Brak odpowiedzi"
+                      )}
+                    </span>
                     {e.changes.length ? <FieldDiff fields={e.changes} /> : null}
                   </div>
                 </li>

@@ -1,19 +1,29 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleCheck, CircleX, Cpu, PlugZap, Save, Unplug } from "lucide-react";
+import { Check, CircleX, PlugZap, Save, TriangleAlert } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { ErrorState, Guard } from "@/components/data/bits";
 import { Container, PageHeader } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
-import { Field, Input, Segmented, Slider, Switch } from "@/components/ui/form-controls";
-import { Chip, Panel, Skeleton, Spinner } from "@/components/ui/misc";
+import { Field, Input, Segmented, Slider, SwitchRow } from "@/components/ui/form-controls";
+import { Chip, DefinitionList, Panel, Skeleton, Spinner } from "@/components/ui/misc";
 import { errorMessage } from "@/lib/api/client";
 import { api } from "@/lib/api/endpoints";
 import type { DefectDojoConfig } from "@/lib/api/types";
 import { fmtRelative, fmtSmart } from "@/lib/format";
 import { useCan } from "@/lib/session";
+
+/** "All good" is quiet: a check and plain text. Only a failure is a red chip. */
+function OkText({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-sm whitespace-nowrap text-ink">
+      <Check className="size-4 shrink-0 text-ink-2" strokeWidth={2.5} aria-hidden />
+      {children}
+    </span>
+  );
+}
 
 function DefectDojoPanel() {
   const q = useQuery({ queryKey: ["defectdojo"], queryFn: api.integrations.defectdojo });
@@ -21,13 +31,22 @@ function DefectDojoPanel() {
   return (
     <Panel
       title="DefectDojo"
-      description="Wysyłka wybranych obserwacji jako findingów informacyjnych (severity: Info) lub jako evidence do dalszej analizy. API: /api/v2."
+      description={
+        <>
+          Findingi informacyjne (severity: Info) albo evidence do analizy. API: <code className="mono">/api/v2</code>
+        </>
+      }
       actions={
         d?.last_test ? (
-          <Chip tone={d.last_test.ok ? "success" : "danger"}>
-            {d.last_test.ok ? <CircleCheck className="size-3.5" aria-hidden /> : <CircleX className="size-3.5" aria-hidden />}
-            {d.last_test.ok ? `Połączono (v${d.last_test.version}, ${d.last_test.latency_ms} ms)` : "Błąd połączenia"}
-          </Chip>
+          d.last_test.ok ? (
+            <OkText>
+              Połączono (v{d.last_test.version}, {d.last_test.latency_ms} ms)
+            </OkText>
+          ) : (
+            <Chip tone="danger">
+              <CircleX className="size-3.5" aria-hidden /> Błąd połączenia
+            </Chip>
+          )
         ) : null
       }
     >
@@ -75,7 +94,7 @@ function DefectDojoForm({ d }: { d: DefectDojoConfig }) {
   };
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="grid gap-8 lg:grid-cols-2">
       <div className="grid content-start gap-4">
         <Field label="Adres instancji" htmlFor="dd-url">
           <Input id="dd-url" value={url} disabled={!editable} onChange={(e) => setUrl(e.target.value)} />
@@ -85,16 +104,15 @@ function DefectDojoForm({ d }: { d: DefectDojoConfig }) {
           htmlFor="dd-token"
           hint={d.api_token_set ? `Zapisany token: ${d.api_token_masked}. Token jest przechowywany w postaci zaszyfrowanej i nigdy nie jest pokazywany w całości.` : "Brak tokenu."}
         >
-          <Input id="dd-token" type="password" autoComplete="off" value={token} disabled={!editable} onChange={(e) => setToken(e.target.value)} placeholder={d.api_token_set ? "Wpisz, aby zastąpić" : "Token z DefectDojo → API v2 Key"} />
+          <Input id="dd-token" type="password" autoComplete="off" value={token} disabled={!editable} onChange={(e) => setToken(e.target.value)} placeholder={d.api_token_set ? "Wpisz, aby zastąpić" : "Token z DefectDojo, klucz API v2"} />
         </Field>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Produkt">
-            <Input value={`${d.product_name} (#${d.product_id})`} disabled />
-          </Field>
-          <Field label="Engagement">
-            <Input value={`${d.engagement_name} (#${d.engagement_id})`} disabled />
-          </Field>
-        </div>
+        {/* Product and engagement come from DefectDojo and cannot be edited here: shown as data, not as greyed-out fields. */}
+        <DefinitionList
+          items={[
+            { label: "Produkt", value: <>{d.product_name} <span className="tabular text-ink-2">(#{d.product_id})</span></> },
+            { label: "Engagement", value: <>{d.engagement_name} <span className="tabular text-ink-2">(#{d.engagement_id})</span></> },
+          ]}
+        />
         <Field label="Domyślny sposób wysyłki">
           <Segmented
             aria-label="Sposób wysyłki"
@@ -106,13 +124,14 @@ function DefectDojoForm({ d }: { d: DefectDojoConfig }) {
             ]}
           />
         </Field>
-        <label className="flex items-start justify-between gap-4 rounded-lg border border-line p-3">
-          <span className="grid gap-0.5">
-            <span className="text-sm font-semibold">Wysyłaj automatycznie po każdym skanie</span>
-            <span className="text-sm text-ink-2">Nowe znaleziska z priorytetem co najmniej {minScore}.</span>
-          </span>
-          <Switch checked={auto} disabled={!editable} onCheckedChange={setAuto} />
-        </label>
+        <SwitchRow
+          label="Wysyłaj automatycznie po każdym skanie"
+          description={`Nowe znaleziska z priorytetem co najmniej ${minScore}.`}
+          checked={auto}
+          disabled={!editable}
+          onCheckedChange={setAuto}
+          className="border-t border-line pt-4"
+        />
         {auto ? (
           <Field label={`Minimalny priorytet: ${minScore}`}>
             <Slider aria-label="Minimalny priorytet" min={0} max={100} step={5} value={[minScore]} disabled={!editable} onValueChange={([v]) => setMinScore(v)} />
@@ -131,21 +150,29 @@ function DefectDojoForm({ d }: { d: DefectDojoConfig }) {
           </Guard>
         </div>
       </div>
-      <div className="grid content-start gap-3">
-        <h3 className="text-sm font-bold">Historia wysyłek</h3>
-        <ul className="grid gap-2">
+      <div className="grid content-start gap-1">
+        <h3 className="text-sm font-semibold">Historia wysyłek</h3>
+        <ul className="divide-y divide-line">
           {(exports.data ?? []).map((e) => (
-            <li key={e.id} className="grid gap-0.5 rounded-lg border border-line p-3 text-sm">
+            <li key={e.id} className="grid gap-0.5 py-3 text-sm">
               <span className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-semibold">
+                <span className="tabular font-semibold">
                   {e.count} × {e.as === "finding" ? "finding" : "evidence"}
                 </span>
-                <Chip tone={e.status === "success" ? "success" : e.status === "partial" ? "warning" : "danger"}>
-                  {e.status === "success" ? "Sukces" : e.status === "partial" ? "Częściowo" : "Błąd"}
-                </Chip>
+                {e.status === "success" ? (
+                  <OkText>Wysłano</OkText>
+                ) : e.status === "partial" ? (
+                  <Chip tone="warning">
+                    <TriangleAlert className="size-3" aria-hidden /> Częściowo
+                  </Chip>
+                ) : (
+                  <Chip tone="danger">
+                    <CircleX className="size-3" aria-hidden /> Błąd
+                  </Chip>
+                )}
               </span>
-              <span className="text-sm text-ink-2">{e.message}</span>
-              <span className="text-xs text-ink-3">
+              <span className="text-pretty text-ink-2">{e.message}</span>
+              <span className="text-xs text-ink-2">
                 {e.by}, {fmtSmart(e.at)}
               </span>
             </li>
@@ -160,31 +187,37 @@ export function IntegrationsView() {
   const engines = useQuery({ queryKey: ["engines"], queryFn: api.integrations.engines });
   return (
     <Container className="pb-12">
-      <PageHeader title="Integracje" description="Połączenie z platformą zarządzania podatnościami i stan narzędzi skanujących." />
+      <PageHeader title="Integracje" />
       <div className="grid gap-6">
         <DefectDojoPanel />
-        <Panel title="Silniki skanujące" description="Rdzeń w Rust uruchamia sprawdzone narzędzia open source i normalizuje ich wyniki do jednego modelu danych." flush>
+        <Panel title="Silniki skanujące" description="Wersje narzędzi, których używa skaner." flush>
           <ul className="divide-y divide-line">
             {(engines.data ?? []).map((e) => (
-              <li key={e.name} className="flex flex-wrap items-center gap-4 px-5 py-3">
-                <Cpu className="size-5 text-ink-3" aria-hidden />
-                <span className="grid min-w-40 gap-0.5">
-                  <span className="mono font-bold">{e.name}</span>
+              <li key={e.name} className="grid gap-x-6 gap-y-1 px-5 py-3 sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:items-center">
+                <span className="grid gap-0.5">
+                  <span className="mono font-medium">{e.name}</span>
                   <span className="text-xs text-ink-2">{e.version ? `wersja ${e.version}` : "nie znaleziono"}</span>
                 </span>
-                <span className="flex-1 text-sm text-ink-2">{e.purpose}</span>
-                <span className="text-xs text-ink-2">{e.last_used_at ? `użyty ${fmtRelative(e.last_used_at)}` : ""}</span>
-                <Chip tone={e.status === "ok" ? "success" : "danger"}>{e.status === "ok" ? "Gotowy" : "Problem"}</Chip>
+                <span className="text-sm text-pretty text-ink-2">
+                  {e.purpose}
+                  {e.last_used_at ? `; użyty ${fmtRelative(e.last_used_at)}` : null}
+                </span>
+                {e.status === "ok" ? (
+                  <OkText>Gotowy</OkText>
+                ) : (
+                  <Chip tone="danger">
+                    <CircleX className="size-3" aria-hidden /> Problem
+                  </Chip>
+                )}
               </li>
             ))}
           </ul>
         </Panel>
-        <Panel title="Źródła pasywne" description="Dane bez aktywnego skanowania (np. certyfikaty z Certificate Transparency, rekordy DNS, eksporty z CMDB).">
-          <div className="flex flex-wrap items-center gap-4 rounded-xl border border-dashed border-line-strong p-5">
-            <Unplug className="size-6 text-ink-3" aria-hidden />
-            <div className="grid flex-1 gap-0.5">
-              <span className="font-semibold">Brak skonfigurowanych źródeł</span>
-              <span className="text-sm text-ink-2">Gdy laboratorium udostępni dane pasywne, trafią do tego samego modelu co wyniki skanera — z oznaczeniem źródła.</span>
+        <Panel title="Źródła pasywne" description="Certificate Transparency, DNS, eksporty z CMDB: dane bez aktywnego skanowania.">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="grid gap-0.5">
+              <p className="text-sm font-semibold">Brak skonfigurowanych źródeł.</p>
+              <p className="max-w-[65ch] text-sm text-pretty text-ink-2">Gdy laboratorium udostępni dane pasywne, trafią do tego samego modelu co wyniki skanera, z oznaczeniem źródła.</p>
             </div>
             <Button disabled>Dodaj źródło</Button>
           </div>

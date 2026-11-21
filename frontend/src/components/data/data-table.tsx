@@ -18,13 +18,13 @@ export interface Column<T> {
   className?: string;
   headerClassName?: string;
   /** Hide below this breakpoint. */
-  hideBelow?: "sm" | "md" | "lg" | "xl";
-  /** Show only below this breakpoint (a stacked summary column for phones). */
-  showBelow?: "sm" | "md" | "lg";
+  hideBelow?: "sm" | "md" | "lg" | "xl" | "2xl";
+  /** Show only below this breakpoint (a stacked summary column for narrow screens). */
+  showBelow?: "sm" | "md" | "lg" | "xl";
 }
 
-const HIDE = { sm: "hidden sm:table-cell", md: "hidden md:table-cell", lg: "hidden lg:table-cell", xl: "hidden xl:table-cell" };
-const SHOW = { sm: "sm:hidden", md: "md:hidden", lg: "lg:hidden" };
+const HIDE = { sm: "hidden sm:table-cell", md: "hidden md:table-cell", lg: "hidden lg:table-cell", xl: "hidden xl:table-cell", "2xl": "hidden 2xl:table-cell" };
+const SHOW = { sm: "sm:hidden", md: "md:hidden", lg: "lg:hidden", xl: "xl:hidden" };
 const visibility = <T,>(c: Column<T>) => cn(c.hideBelow && HIDE[c.hideBelow], c.showBelow && SHOW[c.showBelow]);
 /* Cell padding lines up with the panel header and toolbars (px-5 at the edges). */
 const EDGE = "first:pl-5 last:pr-5";
@@ -81,7 +81,8 @@ export function DataTable<T>({
   const sortField = sort?.replace(/^-/, "");
   const desc = sort?.startsWith("-");
   const cellPad = cn(dense ? "px-3 py-2" : "px-4 py-2.5", EDGE);
-  const checkPad = "w-11 py-2.5 pr-1 pl-5";
+  // Row checkboxes start at sm: on a phone the column would cost a quarter of the width for bulk actions.
+  const checkPad = "w-11 py-2.5 pr-1 pl-5 max-sm:hidden";
 
   return (
     <div className="scroll-quiet relative w-full overflow-x-auto">
@@ -203,7 +204,7 @@ export function Pagination({
       <span className="tabular">
         {fmtNumber(from)}–{fmtNumber(to)} z {fmtNumber(total)}
       </span>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {onPageSize ? (
           <label className="flex items-center gap-2">
             <span>Na stronie</span>

@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, Ellipsis, FileUp, Gauge, Plus, Radar, Trash2 } from "lucide-react";
+import { Ellipsis, FileUp, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
@@ -13,7 +13,7 @@ import { ImportWizard } from "@/components/edit/import-wizard";
 import { Container, PageHeader } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/form-controls";
-import { Chip, Panel, Progress, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/misc";
+import { Panel, Progress, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/misc";
 import { ConfirmDialog, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/overlays";
 import { SimpleSelect } from "@/components/ui/select";
 import { ProfilesTab } from "@/features/scans/profiles-tab";
@@ -21,7 +21,8 @@ import { SchedulesTab } from "@/features/scans/schedules-tab";
 import { errorMessage } from "@/lib/api/client";
 import { api } from "@/lib/api/endpoints";
 import type { ScanRun } from "@/lib/api/types";
-import { fmtDuration, fmtNumber, fmtPercent, fmtSmart } from "@/lib/format";
+import { countLabel, fmtDuration, fmtNumber, fmtPercent, fmtSmart } from "@/lib/format";
+import { CHANGE_COUNT_FORMS } from "@/lib/labels";
 import { useCan } from "@/lib/session";
 
 const STATUS_FILTERS = [
@@ -29,6 +30,29 @@ const STATUS_FILTERS = [
   { value: "completed", label: "Zakończone" },
   { value: "cancelled,failed", label: "Przerwane i błędy" },
 ];
+
+/** "12 480 hostów +34 ~19 −7": the signs carry the meaning, colour only repeats it; the full sentence goes to screen readers. */
+function RunResults({ s }: { s: ScanRun }) {
+  const st = s.stats;
+  const hosts = countLabel(st.hosts_alive, ["host", "hosty", "hostów"]);
+  const spoken = [hosts, st.new ? countLabel(st.new, CHANGE_COUNT_FORMS.new) : null, st.changed ? countLabel(st.changed, CHANGE_COUNT_FORMS.changed) : null, st.gone ? countLabel(st.gone, CHANGE_COUNT_FORMS.gone) : null]
+    .filter(Boolean)
+    .join(", ");
+  return (
+    // Hosts and the change counts wrap as two units, so a narrow column breaks between them, never inside one.
+    <span className="tabular text-sm" title={spoken}>
+      <span aria-hidden className="inline-flex flex-wrap gap-x-2">
+        <span className="whitespace-nowrap text-ink">{hosts}</span>
+        <span className="inline-flex gap-2 whitespace-nowrap">
+          {st.new ? <span className="text-new-ink">+{st.new}</span> : null}
+          {st.changed ? <span className="text-changed-ink">~{st.changed}</span> : null}
+          {st.gone ? <span className="text-gone-ink">−{st.gone}</span> : null}
+        </span>
+      </span>
+      <span className="sr-only">{spoken}</span>
+    </span>
+  );
+}
 
 function RunsTab({ onImport }: { onImport: () => void }) {
   const router = useRouter();
@@ -45,6 +69,17 @@ function RunsTab({ onImport }: { onImport: () => void }) {
     refetchInterval: (query) => (query.state.data?.items.some((s) => s.status === "running") ? 3000 : false),
   });
 
+  const results = (s: ScanRun) =>
+    s.status === "completed" && s.source === "scanner" ? (
+      <RunResults s={s} />
+    ) : s.source === "import" ? (
+      <span className="tabular text-sm">{countLabel(s.stats.hosts_alive, ["host", "hosty", "hostów"])} z pliku</span>
+    ) : (
+      <span className="tabular text-sm text-ink-2">{s.status === "running" ? `${fmtPercent(s.progress)}, ${fmtNumber(s.rate_rps)} zapytań/s` : "—"}</span>
+    );
+
+  // Columns give way by width: range from xl, start and duration from lg, status and results get their own
+  // columns from md; on phones they sit under the scan name.
   const columns: Column<ScanRun>[] = [
     {
       key: "number",
@@ -55,12 +90,17 @@ function RunsTab({ onImport }: { onImport: () => void }) {
             #{s.number} {s.name}
           </span>
           <span className="text-xs text-ink-2">{s.source === "import" ? "Import wyników z pliku" : s.profile_name ? `Profil: ${s.profile_name}` : "—"}</span>
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 md:hidden">
+            <ScanStatusChip value={s.status} />
+            {results(s)}
+          </span>
         </div>
       ),
     },
     {
       key: "status",
       header: "Status",
+      hideBelow: "md",
       cell: (s) => (
         <div className="grid min-w-32 gap-1.5">
           <ScanStatusChip value={s.status} />
@@ -68,42 +108,32 @@ function RunsTab({ onImport }: { onImport: () => void }) {
         </div>
       ),
     },
-    { key: "targets", header: "Zakres", hideBelow: "lg", cell: (s) => <span className="text-sm text-ink-2">{s.targets_label}</span> },
-    { key: "started", header: "Start", hideBelow: "md", cell: (s) => <span className="text-sm whitespace-nowrap">{fmtSmart(s.started_at)}</span> },
+    { key: "targets", header: "Zakres", hideBelow: "xl", cell: (s) => <span className="text-sm whitespace-nowrap text-ink-2">{s.targets_label}</span> },
+    { key: "started", header: "Start", hideBelow: "lg", cell: (s) => <span className="text-sm whitespace-nowrap">{fmtSmart(s.started_at)}</span> },
     {
       key: "duration",
       header: "Czas trwania",
-      hideBelow: "md",
+      hideBelow: "xl",
       cell: (s) => (
         <span className="text-sm whitespace-nowrap">
           {s.source === "import" ? "—" : fmtDuration(s.duration_s)}
-          {s.windows_used > 1 ? <span className="ml-1 text-ink-2">({s.windows_used} okna)</span> : null}
+          {s.windows_used > 1 ? <span className="ml-1 text-ink-2">({countLabel(s.windows_used, ["okno", "okna", "okien"])})</span> : null}
         </span>
       ),
     },
     {
       key: "changes",
       header: "Wyniki",
-      cell: (s) =>
-        s.status === "completed" && s.source === "scanner" ? (
-          <span className="flex flex-wrap gap-1 text-xs">
-            <Chip tone="outline" className="tabular">{fmtNumber(s.stats.hosts_alive)} hostów</Chip>
-            {s.stats.new ? <Chip className="bg-new-soft text-new-ink">+{s.stats.new}</Chip> : null}
-            {s.stats.changed ? <Chip className="bg-changed-soft text-changed-ink">~{s.stats.changed}</Chip> : null}
-            {s.stats.gone ? <Chip className="bg-gone-soft text-gone-ink">−{s.stats.gone}</Chip> : null}
-          </span>
-        ) : s.source === "import" ? (
-          <Chip tone="outline">{fmtNumber(s.stats.hosts_alive)} hostów z pliku</Chip>
-        ) : (
-          <span className="text-sm text-ink-2">{s.status === "running" ? `${fmtPercent(s.progress)}, ${fmtNumber(s.rate_rps)} zapytań/s` : "—"}</span>
-        ),
+      hideBelow: "md",
+      cell: results,
     },
     {
       key: "actions",
       header: <span className="sr-only">Akcje</span>,
       cell: (s) => (
         <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-          <Button size="sm" variant="secondary" asChild>
+          {/* On phones the whole row opens the scan; only the menu stays. */}
+          <Button size="sm" variant="ghost" className="hidden md:inline-flex" asChild>
             <Link href={`/scans/${s.id}`}>{s.status === "running" ? "Podgląd na żywo" : "Szczegóły"}</Link>
           </Button>
           <DropdownMenu>
@@ -193,7 +223,6 @@ export function ScansView() {
     <Container className="pb-12">
       <PageHeader
         title="Skanowania"
-        description="Przebiegi skanowania, harmonogramy z oknami czasowymi i profile określające tempo oraz zakres sprawdzeń."
         actions={
           <Guard permission="scans:create">
             <Button variant="primary" asChild>
@@ -206,15 +235,9 @@ export function ScansView() {
       />
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
-          <TabsTrigger value="runs">
-            <Radar /> Przebiegi
-          </TabsTrigger>
-          <TabsTrigger value="schedules">
-            <CalendarClock /> Harmonogramy
-          </TabsTrigger>
-          <TabsTrigger value="profiles">
-            <Gauge /> Profile
-          </TabsTrigger>
+          <TabsTrigger value="runs">Przebiegi</TabsTrigger>
+          <TabsTrigger value="schedules">Harmonogramy</TabsTrigger>
+          <TabsTrigger value="profiles">Profile</TabsTrigger>
         </TabsList>
         <TabsContent value="runs">
           <RunsTab onImport={() => setImportOpen(true)} />

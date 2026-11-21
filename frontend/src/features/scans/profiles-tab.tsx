@@ -1,24 +1,25 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, Gauge, Pencil, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { Guard } from "@/components/data/bits";
 import { Button } from "@/components/ui/button";
-import { Field, Input, Segmented, Slider, Switch, Textarea } from "@/components/ui/form-controls";
-import { Chip, Skeleton } from "@/components/ui/misc";
+import { Field, Input, Segmented, Slider, SwitchRow, Textarea } from "@/components/ui/form-controls";
+import { Skeleton } from "@/components/ui/misc";
 import { ConfirmDialog, Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/overlays";
 import { errorMessage } from "@/lib/api/client";
 import { api } from "@/lib/api/endpoints";
 import type { ScanProfile, ScanProfileInput } from "@/lib/api/types";
 import { countLabel, fmtNumber } from "@/lib/format";
 import { useCan } from "@/lib/session";
+import { cn } from "@/lib/utils";
 
 type Mode = { kind: "edit"; profile: ScanProfile } | { kind: "copy"; profile: ScanProfile };
 
 function portsLabel(p: ScanProfile["ports"]) {
-  return p.preset === "top100" ? "100 portów" : p.preset === "top1000" ? "1000 portów" : p.preset === "allowed" ? "porty dozwolone" : "porty własne";
+  return p.preset === "top100" ? "100 najczęstszych" : p.preset === "top1000" ? "1000 najczęstszych" : p.preset === "allowed" ? "dozwolone" : p.custom || "własne";
 }
 
 /** Edit a profile or create a new one from a copy. Inside SheetContent: fresh state on each opening. */
@@ -109,36 +110,30 @@ function ProfileForm({ mode, onClose }: { mode: Mode; onClose: () => void }) {
             <Input id="pr-ports" className="mono" disabled={!editable} value={custom} onChange={(e) => setCustom(e.target.value)} aria-invalid={!portsOk} />
           </Field>
         ) : null}
-        <Field label={`Limit tempa: ${fmtNumber(Math.min(rate, max))} zapytań/s`} hint={`Globalny limit bezpieczeństwa: ${fmtNumber(max)} zapytań/s (Administracja → Ustawienia).`}>
+        <Field label={`Limit tempa: ${fmtNumber(Math.min(rate, max))} zapytań/s`} hint={`Globalny limit z ustawień: ${fmtNumber(max)} zapytań/s.`}>
           <Slider aria-label="Limit zapytań na sekundę" disabled={!editable} min={10} max={max} step={10} value={[Math.min(rate, max)]} onValueChange={([v]) => setRate(v)} />
         </Field>
         <Field label={`Równoległe wątki: ${conc}`}>
           <Slider aria-label="Liczba równoległych wątków" disabled={!editable} min={1} max={128} step={1} value={[conc]} onValueChange={([v]) => setConc(v)} />
         </Field>
-        <Field label="Tempo nmap" hint="T2 jest najłagodniejsze — zalecane dla drukarek, kamer i kontrolerów BMC.">
+        <Field label="Tempo nmap" hint="T2 jest najłagodniejsze, zalecane dla drukarek, kamer i kontrolerów BMC.">
           <Segmented
             aria-label="Tempo nmap"
             value={timing}
             onChange={(v) => editable && setTiming(v)}
             options={[
-              { value: "T2", label: "T2 — ostrożnie" },
-              { value: "T3", label: "T3 — standard" },
-              { value: "T4", label: "T4 — szybko" },
+              { value: "T2", label: "T2 (ostrożnie)" },
+              { value: "T3", label: "T3 (standard)" },
+              { value: "T4", label: "T4 (szybko)" },
             ]}
           />
         </Field>
         <Field label={`Powtórne pomiary hostów niestabilnych: ${retries}`} hint="Ile razy ponowić pomiar, zanim zmiana zostanie uznana za pewną.">
           <Slider aria-label="Liczba powtórzeń" disabled={!editable} min={0} max={5} step={1} value={[retries]} onValueChange={([v]) => setRetries(v)} />
         </Field>
-        <div className="grid gap-2">
-          <label className="flex items-center justify-between gap-3 rounded-lg border border-line p-3 text-sm font-semibold">
-            Odcisk HTTP/HTTPS (tytuł, nagłówki, ciasteczka, technologie)
-            <Switch checked={http} disabled={!editable} onCheckedChange={setHttp} />
-          </label>
-          <label className="flex items-center justify-between gap-3 rounded-lg border border-line p-3 text-sm font-semibold">
-            Certyfikaty TLS
-            <Switch checked={tls} disabled={!editable} onCheckedChange={setTls} />
-          </label>
+        <div className="grid divide-y divide-line border-y border-line">
+          <SwitchRow label="Odcisk HTTP/HTTPS" description="Tytuł, nagłówki, ciasteczka i technologie." checked={http} disabled={!editable} onCheckedChange={setHttp} className="py-3" />
+          <SwitchRow label="Certyfikaty TLS" checked={tls} disabled={!editable} onCheckedChange={setTls} className="py-3" />
         </div>
         <Field label="Sygnatury">
           <Segmented
@@ -206,7 +201,7 @@ export function ProfilesTab() {
   return (
     <div className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-2xl text-sm text-ink-2">Profil określa porty, tempo, timing nmap i zakres sprawdzeń. Żaden profil nie przekroczy globalnych limitów bezpieczeństwa.</p>
+        <p className="max-w-[65ch] text-sm text-ink-2">Żaden profil nie przekroczy globalnych limitów z ustawień.</p>
         <Guard permission="scans:create">
           <Button variant="primary" disabled={!base} onClick={() => base && setMode({ kind: "copy", profile: base })}>
             <Plus /> Nowy profil
@@ -215,36 +210,44 @@ export function ProfilesTab() {
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         {(q.data ?? []).map((p) => (
-          <article key={p.id} className="grid content-start gap-3 rounded-xl border border-line bg-surface p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="grid gap-1">
-                <h3 className="flex items-center gap-2 font-bold">
-                  {p.name} {p.builtin ? <Chip tone="outline">wbudowany</Chip> : null}
-                </h3>
-                <p className="text-sm text-ink-2">{p.description}</p>
-              </div>
-              <Gauge className="size-5 shrink-0 text-ink-3" aria-hidden />
+          <article key={p.id} className="grid content-start gap-4 rounded-xl border border-line bg-surface p-5">
+            <div className="grid gap-1">
+              <h3 className="font-semibold">
+                {p.name} {p.builtin ? <span className="font-normal text-ink-2">(wbudowany)</span> : null}
+              </h3>
+              <p className="text-sm text-pretty text-ink-2">{p.description}</p>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              <Chip>{fmtNumber(p.rate_limit_rps)} zapytań/s</Chip>
-              <Chip>{p.max_concurrency} wątków</Chip>
-              <Chip>nmap {p.nmap_timing}</Chip>
-              <Chip>{portsLabel(p.ports)}</Chip>
-              <Chip>{p.http_probe ? "HTTP/HTTPS" : "bez HTTP"}</Chip>
-              <Chip>{p.signatures === "all" ? "wszystkie sygnatury" : p.signatures === "none" ? "bez sygnatur" : countLabel(p.signature_ids.length, ["sygnatura", "sygnatury", "sygnatur"])}</Chip>
-              <Chip>podgrupy {p.batch_strategy === "auto" ? "automatyczne" : `/${p.batch_prefix}`}</Chip>
-            </div>
-            <div className="flex gap-2">
+            {/* Parameters as a definition list: label and value, no pills. */}
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
+              {(
+                [
+                  ["Tempo", `${fmtNumber(p.rate_limit_rps)} zapytań/s`, false],
+                  ["Wątki", fmtNumber(p.max_concurrency), false],
+                  ["nmap", p.nmap_timing, true],
+                  ["Porty", portsLabel(p.ports), p.ports.preset === "custom" && Boolean(p.ports.custom)],
+                  ["HTTP", p.http_probe ? (p.tls_probe ? "tak, z TLS" : "tak") : "nie", false],
+                  ["Sygnatury", p.signatures === "all" ? "wszystkie" : p.signatures === "none" ? "bez sygnatur" : countLabel(p.signature_ids.length, ["wybrana", "wybrane", "wybranych"]), false],
+                  ["Podgrupy", p.batch_strategy === "auto" ? "automatyczne" : `/${p.batch_prefix}`, p.batch_strategy !== "auto"],
+                ] as const
+              ).map(([k, v, machine]) => (
+                <div key={k} className="flex justify-between gap-3 border-b border-line pb-1.5">
+                  <dt className="text-ink-2">{k}</dt>
+                  <dd className={cn("min-w-0 truncate text-right", machine ? "mono" : "tabular")}>{v}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="-ml-3 flex gap-1">
               <Button
                 size="sm"
+                variant="ghost"
                 onClick={() => setMode({ kind: "edit", profile: p })}
                 aria-label={can("scans:update") ? `Edytuj profil ${p.name}` : `Szczegóły profilu ${p.name}`}
               >
-                <Pencil /> {can("scans:update") ? "Edytuj" : "Szczegóły"}
+                {can("scans:update") ? "Edytuj" : "Szczegóły"}
               </Button>
               <Guard permission="scans:create">
                 <Button size="sm" variant="ghost" onClick={() => setMode({ kind: "copy", profile: p })} aria-label={`Kopiuj profil ${p.name}`}>
-                  <Copy /> Kopiuj
+                  Kopiuj
                 </Button>
               </Guard>
             </div>

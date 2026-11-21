@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, Info, RefreshCw } from "lucide-react";
+import { ArrowLeftRight } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
@@ -16,10 +16,11 @@ import { Panel, Skeleton, Spinner } from "@/components/ui/misc";
 import { SimpleSelect } from "@/components/ui/select";
 import { FieldDiff } from "@/components/viz/bits";
 import { ChangesTimeline, KIND_COLOR, KIND_ORDER } from "@/components/viz/changes-timeline";
+import { LegendGlyph } from "@/components/viz/core";
 import { errorMessage } from "@/lib/api/client";
 import { api } from "@/lib/api/endpoints";
 import type { ChangeKind, UnstableHost } from "@/lib/api/types";
-import { fmtDayMonth, fmtNumber, fmtPercent, fmtRelative } from "@/lib/format";
+import { countLabel, fmtDayMonth, fmtNumber, fmtPercent, fmtRelative, plural } from "@/lib/format";
 import { CHANGE_LABEL_PLURAL } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 
@@ -29,7 +30,7 @@ function HourBars({ values }: { values: (number | null)[] }) {
       {values.map((v, h) => (
         <span
           key={h}
-          title={`${String(h).padStart(2, "0")}:00 — ${v === null ? "brak pomiarów" : fmtPercent(v)}`}
+          title={`${String(h).padStart(2, "0")}:00: ${v === null ? "brak pomiarów" : fmtPercent(v)}`}
           className={cn("w-1.5 rounded-t-[2px]", h >= 22 || h < 6 ? "bg-ink-3" : "bg-data")}
           style={{ height: `${Math.max(8, (v ?? 0) * 100)}%`, opacity: v === null ? 0.25 : 1 }}
         />
@@ -51,31 +52,35 @@ function UnstablePanel() {
       toast.error("Nie udało się zlecić pomiaru", { description: errorMessage(e) });
     }
   };
+  const misses = settings.data?.change_detection.inactive_after_misses ?? 3;
   return (
-    <Panel
-      title="Hosty niestabilne"
-      description={`Odpowiadają nieregularnie, więc zmiana może być szumem. Host staje się nieaktywny po ${settings.data?.change_detection.inactive_after_misses ?? 3} skanach bez odpowiedzi; pomiar można powtórzyć w ciągu dnia.`}
-      flush
-    >
+    <Panel title="Hosty niestabilne" description={`Nieaktywny po ${misses} ${plural(misses, ["skanie", "skanach", "skanach"])} bez odpowiedzi.`} flush>
       <ul className="scroll-quiet max-h-[34rem] divide-y divide-line overflow-y-auto">
         {(q.data ?? []).slice(0, 40).map((u) => (
-          <li key={u.host_id} className="grid gap-2 px-5 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-            <div className="grid min-w-0 gap-1">
+          // Wraps instead of squeezing: with large text the recheck controls move under the response pattern.
+          <li key={u.host_id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5 py-3">
+            <div className="grid min-w-0 flex-[1_1_13rem] gap-1">
               <Link href={`/assets/${u.host_id}`} className="flex min-w-0 items-baseline gap-2 hover:underline">
-                <MonoValue value={u.ip} copy={false} className="font-semibold" />
+                <MonoValue value={u.ip} copy={false} className="font-medium" />
                 {u.hostname ? <span className="truncate text-xs text-ink-2">{u.hostname}</span> : null}
               </Link>
               <span className="flex flex-wrap items-center gap-3">
                 <ResponsePattern pattern={u.pattern} />
-                <span className="text-xs text-ink-2">{fmtPercent(u.response_rate)} odpowiedzi</span>
+                <span className="tabular text-xs text-ink-2">{fmtPercent(u.response_rate)} odpowiedzi</span>
                 <HourBars values={u.by_hour} />
               </span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-ink-2">{u.last_recheck_at ? `pomiar ${fmtRelative(u.last_recheck_at)}` : "bez pomiarów w dzień"}</span>
               <Guard permission="assets:recheck">
-                <Button size="sm" variant="secondary" disabled={u.recheck_pending} onClick={() => recheck(u)}>
-                  {u.recheck_pending ? <Spinner /> : <RefreshCw />} {u.recheck_pending ? "Mierzę…" : "Ponów pomiar"}
+                <Button size="sm" variant="ghost" disabled={u.recheck_pending} onClick={() => recheck(u)}>
+                  {u.recheck_pending ? (
+                    <>
+                      <Spinner /> Mierzę…
+                    </>
+                  ) : (
+                    "Ponów pomiar"
+                  )}
                 </Button>
               </Guard>
             </div>
@@ -88,9 +93,7 @@ function UnstablePanel() {
           </li>
         ) : null}
       </ul>
-      <p className="flex items-center gap-2 border-t border-line px-5 py-3 text-xs text-ink-2">
-        <Info className="size-3.5" aria-hidden /> Szare słupki to godziny okna nocnego 22:00–06:00.
-      </p>
+      <p className="border-t border-line px-5 py-3 text-xs text-ink-2">Szare słupki to godziny okna nocnego 22:00–06:00.</p>
     </Panel>
   );
 }
@@ -114,7 +117,7 @@ export function ChangesView() {
     placeholderData: keepPreviousData,
   });
   const d = diff.data;
-  const runOptions = (runs.data?.items ?? []).map((r) => ({ value: r.id, label: `#${r.number} — ${fmtDayMonth(r.finished_at)}` }));
+  const runOptions = (runs.data?.items ?? []).map((r) => ({ value: r.id, label: `#${r.number}, ${fmtDayMonth(r.finished_at)}` }));
 
   const setPair = (h: string, b = "") => {
     setHead(h);
@@ -135,65 +138,65 @@ export function ChangesView() {
     setPage(1);
   };
 
+  const kindFilters = d ? (
+    <div className="flex flex-wrap gap-2" role="group" aria-label="Filtruj według rodzaju zmiany">
+      {KIND_ORDER.map((k) => {
+        const active = kinds.has(k);
+        return (
+          <button
+            key={k}
+            type="button"
+            aria-pressed={active}
+            onClick={() => toggleKind(k)}
+            className={cn(
+              "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm transition-colors",
+              active ? "border-ink bg-surface-2 ring-1 ring-ink" : "border-line hover:border-line-strong hover:bg-surface-2",
+            )}
+          >
+            <LegendGlyph shape="rect" color={KIND_COLOR[k]} />
+            <span className={active ? "text-ink" : "text-ink-2"}>{CHANGE_LABEL_PLURAL[k]}</span>
+            <span className="tabular font-semibold text-ink">{fmtNumber(d.summary[k])}</span>
+          </button>
+        );
+      })}
+    </div>
+  ) : (
+    <Skeleton className="h-9 w-[28rem] max-w-full" />
+  );
+
   return (
     <Container className="pb-12">
-      <PageHeader
-        title="Zmiany"
-        description="Porównanie dwóch przebiegów skanowania: co się pojawiło, zniknęło, zmieniło lub odpowiada nieregularnie. Pewność zmiany uwzględnia powtórne pomiary."
-      />
+      <PageHeader title="Zmiany" description="Pewność zmiany uwzględnia powtórne pomiary." />
       <div className="grid gap-6">
         <Panel bodyClassName="grid gap-5">
           <div className="flex flex-wrap items-end gap-3">
             <label className="grid gap-1.5">
               <span className="text-sm font-semibold text-ink-2">Skan bazowy</span>
-              <SimpleSelect aria-label="Skan bazowy" className="w-56" value={base || d?.base.id || ""} onChange={(v) => setPair(head || d?.head.id || "", v)} options={runOptions} />
+              <SimpleSelect aria-label="Skan bazowy" className="w-48" value={base || d?.base.id || ""} onChange={(v) => setPair(head || d?.head.id || "", v)} options={runOptions} />
             </label>
             <span className="grid h-9 place-items-center px-1 text-ink-3" aria-hidden>
               <ArrowLeftRight className="size-4" />
             </span>
             <label className="grid gap-1.5">
               <span className="text-sm font-semibold text-ink-2">Skan porównywany</span>
-              <SimpleSelect aria-label="Skan porównywany" className="w-56" value={head || d?.head.id || ""} onChange={(v) => setPair(v)} options={runOptions} />
+              <SimpleSelect aria-label="Skan porównywany" className="w-48" value={head || d?.head.id || ""} onChange={(v) => setPair(v)} options={runOptions} />
             </label>
             <Button variant="ghost" onClick={() => setPair("")}>
               Ostatnie dwa skany
             </Button>
           </div>
-          {d ? (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {KIND_ORDER.map((k) => {
-                const active = kinds.has(k);
-                return (
-                  <button
-                    key={k}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => toggleKind(k)}
-                    className={cn(
-                      "grid gap-1 rounded-xl border p-4 text-left transition-colors",
-                      active ? "border-ink bg-surface-2 ring-1 ring-ink" : "border-line hover:border-line-strong",
-                    )}
-                  >
-                    <span className="flex items-center gap-2 text-sm font-semibold text-ink-2">
-                      <span className="size-2.5 rounded-[3px]" style={{ background: KIND_COLOR[k] }} aria-hidden />
-                      {CHANGE_LABEL_PLURAL[k]}
-                    </span>
-                    <span className="tabular text-3xl font-extrabold">{fmtNumber(d.summary[k])}</span>
-                    <span className="text-xs text-ink-2">{active ? "Filtr aktywny — kliknij, aby usunąć" : "Kliknij, aby filtrować"}</span>
-                  </button>
-                );
-              })}
-            </div>
+          {/* One row of filter toggles that doubles as the chart legend, on the same line as the chart's "Tabela" switch. */}
+          {timeline.data ? (
+            <ChangesTimeline points={timeline.data} height={150} legend={kindFilters} selected={d?.head.number} onSelect={(p) => setPair(p.scan_id)} />
           ) : (
-            <Skeleton className="h-24" />
+            kindFilters
           )}
-          {timeline.data ? <ChangesTimeline points={timeline.data} height={150} selected={d?.head.number} onSelect={(p) => setPair(p.scan_id)} /> : null}
         </Panel>
 
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
           <Panel
             title={d ? `Skan #${d.base.number} → #${d.head.number}` : "Lista zmian"}
-            description={d ? `${fmtNumber(d.total)} zmian po filtrach.` : undefined}
+            description={d ? countLabel(d.total, ["zmiana", "zmiany", "zmian"]) : undefined}
             flush
             actions={
               <label className="flex items-center gap-2 text-sm font-semibold text-ink-2">
@@ -215,20 +218,20 @@ export function ChangesView() {
                         <span className="font-semibold">{c.summary}</span>
                       </span>
                       <Link href={`/assets/${c.host_id}${c.port ? `#svc-${c.port}` : ""}`} className="flex min-w-0 items-baseline gap-2 text-sm hover:underline">
-                        <MonoValue value={`${c.ip}${c.port ? `:${c.port}` : ""}`} copy={false} className="font-semibold text-link" />
+                        <MonoValue value={`${c.ip}${c.port ? `:${c.port}` : ""}`} copy={false} className="font-medium text-link" />
                         {c.hostname ? <span className="truncate text-xs text-ink-2">{c.hostname}</span> : null}
                       </Link>
                     </div>
-                    <div className="grid justify-items-end gap-0.5">
-                      <span className="text-xs text-ink-2">Pewność zmiany</span>
+                    <span className="inline-flex items-baseline gap-1.5 text-xs whitespace-nowrap text-ink-2">
+                      Pewność zmiany
                       <ConfidenceMeter value={c.confidence} compact />
-                    </div>
+                    </span>
                   </div>
                   <FieldDiff fields={c.fields} />
                 </li>
               ))}
             </ul>
-            {d && !d.items.length ? <EmptyState title="Brak zmian dla wybranych filtrów" description="Zmień parę skanów albo wyłącz filtry." /> : null}
+            {d && !d.items.length ? <EmptyState title="Brak zmian dla tych filtrów." description="Zmień parę skanów albo wyłącz filtry." /> : null}
             {d ? <Pagination page={page} pageSize={30} total={d.total} onPage={setPage} /> : null}
           </Panel>
           <UnstablePanel />

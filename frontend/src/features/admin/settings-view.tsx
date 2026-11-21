@@ -1,19 +1,19 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Lock, Save, ShieldCheck } from "lucide-react";
+import { KeyRound, Lock, Save } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { ErrorState, Guard, TagInput } from "@/components/data/bits";
 import { Container, PageHeader } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Slider, Textarea } from "@/components/ui/form-controls";
-import { Chip, Panel, Skeleton } from "@/components/ui/misc";
+import { DefinitionList, Panel, Skeleton } from "@/components/ui/misc";
 import { ConfirmDialog } from "@/components/ui/overlays";
 import { ApiError, errorMessage } from "@/lib/api/client";
 import { api } from "@/lib/api/endpoints";
 import type { Settings } from "@/lib/api/types";
-import { fmtDate, fmtNumber, fmtPercent, fmtRelative } from "@/lib/format";
+import { fmtDate, fmtNumber, fmtPercent, fmtRelative, plural } from "@/lib/format";
 import { parseCidr } from "@/lib/net";
 import { useCan } from "@/lib/session";
 
@@ -25,61 +25,55 @@ function EncryptionPanel() {
   return (
     <Panel
       title="Szyfrowanie danych w spoczynku"
-      description="Pola zawierające dane wrażliwe są szyfrowane w bazie PostgreSQL. Klucz pochodzi z menedżera sekretów i nie jest przechowywany w repozytorium."
-      actions={e ? <Chip tone="success"><Lock className="size-3" aria-hidden /> Włączone</Chip> : null}
+      description="Klucz pochodzi z menedżera sekretów, nie z repozytorium."
+      actions={
+        e ? (
+          <span className="inline-flex items-center gap-1.5 text-sm text-ink">
+            <Lock className="size-4 text-ink-2" aria-hidden /> Włączone
+          </span>
+        ) : null
+      }
     >
       {!e ? (
         <Skeleton className="h-40" />
       ) : (
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
-          <div className="grid content-start gap-3 text-sm">
-            <div className="flex items-start gap-3 rounded-xl bg-surface-2 p-4">
-              <ShieldCheck className="mt-0.5 size-5 text-success" aria-hidden />
-              <div className="grid gap-1">
-                <span className="font-bold">{e.algorithm}</span>
-                <span className="text-ink-2">{e.provider}</span>
-              </div>
-            </div>
-            <dl className="grid gap-2">
-              <div className="flex justify-between gap-3">
-                <dt className="text-ink-2">Identyfikator klucza</dt>
-                <dd className="mono font-semibold">{e.key_id}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-ink-2">Ostatnia rotacja</dt>
-                <dd className="font-semibold">{fmtDate(e.rotated_at)}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-ink-2">Ostatnia weryfikacja</dt>
-                <dd className="font-semibold">{fmtRelative(e.last_check_at)}</dd>
-              </div>
-            </dl>
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+          <div className="grid content-start gap-4 text-sm">
+            <DefinitionList
+              items={[
+                { label: "Algorytm", value: e.algorithm },
+                { label: "Dostawca klucza", value: e.provider },
+                { label: "Identyfikator klucza", value: <span className="mono">{e.key_id}</span> },
+                { label: "Ostatnia rotacja", value: fmtDate(e.rotated_at) },
+                { label: "Ostatnia weryfikacja", value: fmtRelative(e.last_check_at) },
+              ]}
+            />
             <Guard permission="settings:manage">
               <Button className="justify-self-start" onClick={() => setConfirm(true)}>
                 <KeyRound /> Wykonaj rotację klucza
               </Button>
             </Guard>
           </div>
-          <div className="overflow-hidden rounded-xl border border-line">
-            <table className="w-full text-sm">
-              <thead className="bg-surface-2 text-left text-sm text-ink-2">
-                <tr>
-                  <th className="px-3 py-2 font-semibold">Tabela i kolumna</th>
-                  <th className="px-3 py-2 font-semibold">Zawartość</th>
+          {/* The list of encrypted columns sits in the panel as a plain table, without a second frame. */}
+          <table className="w-full self-start text-sm">
+            <caption className="sr-only">Szyfrowane kolumny</caption>
+            <thead className="border-b border-line text-left text-xs text-ink-2">
+              <tr>
+                <th className="py-2 pr-3 font-semibold">Tabela i kolumna</th>
+                <th className="py-2 font-semibold">Zawartość</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {e.encrypted_fields.map((f) => (
+                <tr key={`${f.table}.${f.column}`}>
+                  <td className="mono py-1.5 pr-3 align-top text-sm [overflow-wrap:anywhere]">
+                    {f.table}.{f.column}
+                  </td>
+                  <td className="py-1.5 align-top text-pretty">{f.description}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {e.encrypted_fields.map((f) => (
-                  <tr key={`${f.table}.${f.column}`} className="border-t border-line">
-                    <td className="mono px-3 py-1.5 text-sm">
-                      {f.table}.{f.column}
-                    </td>
-                    <td className="px-3 py-1.5">{f.description}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
       <ConfirmDialog
@@ -139,7 +133,7 @@ function SettingsForm({ data }: { data: Settings }) {
     <Container className="pb-12">
       <PageHeader
         title="Ustawienia"
-        description="Zasady bezpiecznego skanowania, wykrywania zmian i przechowywania danych. Zmiany są zapisywane w dzienniku zdarzeń."
+        description="Każda zmiana ustawień trafia do dziennika zdarzeń."
         actions={
           <Guard permission="settings:manage">
             <Button variant="primary" onClick={save} disabled={!dirty || badCidrs.length > 0}>
@@ -153,7 +147,7 @@ function SettingsForm({ data }: { data: Settings }) {
       ) : (
         <div className="grid gap-6">
           <div className="grid items-start gap-6 xl:grid-cols-2">
-            <Panel title="Bezpieczeństwo skanowania" description="Limity nadrzędne wobec profili — żaden profil nie może ich przekroczyć.">
+            <Panel title="Bezpieczeństwo skanowania" description="Żaden profil nie może przekroczyć tych limitów.">
               <div className="grid gap-5">
                 <Field label={`Maksymalne tempo: ${fmtNumber(s.scan_safety.max_rate_rps)} zapytań/s`} error={errors.max_rate_rps}>
                   <Slider aria-label="Maksymalne tempo" disabled={!editable} min={50} max={2000} step={50} value={[s.scan_safety.max_rate_rps]} onValueChange={([v]) => setS({ ...s, scan_safety: { ...s.scan_safety, max_rate_rps: v } })} />
@@ -168,7 +162,7 @@ function SettingsForm({ data }: { data: Settings }) {
                   <Textarea id="ports" disabled={!editable} className="mono min-h-20 text-sm" value={s.scan_safety.allowed_ports} onChange={(e) => setS({ ...s, scan_safety: { ...s.scan_safety, allowed_ports: e.target.value } })} />
                 </Field>
                 <Field label="Zakresy wykluczone (nigdy nie skanowane)" error={badCidrs.length ? `Niepoprawne zakresy: ${badCidrs.join(", ")}` : errors.excluded_cidrs}>
-                  <TagInput value={s.scan_safety.excluded_cidrs} onChange={(v) => setS({ ...s, scan_safety: { ...s.scan_safety, excluded_cidrs: v.map((x) => x.replace(/^#/, "")) } })} placeholder="np. 10.0.250.0/24 i Enter" />
+                  <TagInput mono value={s.scan_safety.excluded_cidrs} onChange={(v) => setS({ ...s, scan_safety: { ...s.scan_safety, excluded_cidrs: v.map((x) => x.replace(/^#/, "")) } })} placeholder="np. 10.0.250.0/24 i Enter" />
                 </Field>
                 <Field label="Identyfikacja skanera (User-Agent)" htmlFor="ua" hint="Administratorzy sieci od razu wiedzą, kto skanuje i gdzie zgłosić uwagi.">
                   <Input id="ua" disabled={!editable} className="mono text-sm" value={s.scan_safety.user_agent} onChange={(e) => setS({ ...s, scan_safety: { ...s.scan_safety, user_agent: e.target.value } })} />
@@ -176,9 +170,12 @@ function SettingsForm({ data }: { data: Settings }) {
               </div>
             </Panel>
             <div className="grid gap-6">
-              <Panel title="Wykrywanie zmian" description="Jak odróżnić prawdziwą zmianę od szumu hostów, które odpowiadają tylko okresowo.">
+              <Panel title="Wykrywanie zmian">
                 <div className="grid gap-5">
-                  <Field label={`Host nieaktywny po ${s.change_detection.inactive_after_misses} kolejnych skanach bez odpowiedzi`} error={errors.inactive_after_misses}>
+                  <Field
+                    label={`Host nieaktywny po ${s.change_detection.inactive_after_misses} ${plural(s.change_detection.inactive_after_misses, ["skanie", "kolejnych skanach", "kolejnych skanach"])} bez odpowiedzi`}
+                    error={errors.inactive_after_misses}
+                  >
                     <Slider aria-label="Liczba skanów bez odpowiedzi" disabled={!editable} min={1} max={10} step={1} value={[s.change_detection.inactive_after_misses]} onValueChange={([v]) => setS({ ...s, change_detection: { ...s.change_detection, inactive_after_misses: v } })} />
                   </Field>
                   <Field label={`Powtórne pomiary hostów niestabilnych: ${s.change_detection.unstable_retries}`}>
@@ -200,10 +197,10 @@ function SettingsForm({ data }: { data: Settings }) {
                   <Field label="Dziennik zdarzeń (dni)" htmlFor="ret-audit">
                     <Input id="ret-audit" type="number" disabled={!editable} value={s.retention.audit_days} onChange={(e) => setS({ ...s, retention: { ...s.retention, audit_days: Number(e.target.value) } })} />
                   </Field>
-                  <Field label="Domyślne okno — początek" htmlFor="dw-start">
+                  <Field label="Początek domyślnego okna" htmlFor="dw-start">
                     <Input id="dw-start" type="time" disabled={!editable} value={s.default_window.start} onChange={(e) => setS({ ...s, default_window: { ...s.default_window, start: e.target.value } })} />
                   </Field>
-                  <Field label="Domyślne okno — koniec" htmlFor="dw-end">
+                  <Field label="Koniec domyślnego okna" htmlFor="dw-end">
                     <Input id="dw-end" type="time" disabled={!editable} value={s.default_window.end} onChange={(e) => setS({ ...s, default_window: { ...s.default_window, end: e.target.value } })} />
                   </Field>
                 </div>

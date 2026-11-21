@@ -40,12 +40,14 @@ export function MonoValue({
             onActivate();
           }}
           aria-label={activateLabel}
-          className="mono truncate rounded-sm text-left underline-offset-2 hover:text-link hover:underline"
+          title={value}
+          // min-w-0: a flex item will not shrink below its text otherwise, and the ellipsis never kicks in.
+          className="mono min-w-0 truncate rounded-sm text-left underline-offset-2 hover:text-link hover:underline"
         >
           {value}
         </button>
       ) : (
-        <span className="mono truncate">{value}</span>
+        <span className="mono min-w-0 truncate">{value}</span>
       )}
       {copy ? (
         <button
@@ -149,6 +151,18 @@ export function ErrorState({ error, onRetry, className }: { error: unknown; onRe
       ) : null}
     </div>
   );
+}
+
+const MACHINE_LABEL = /^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2}|:\d{1,5})?(\s|$)/;
+
+/**
+ * A free-form resource name from the audit log: an IP, CIDR or IP:port in mono,
+ * a number ("#128", "4 znaleziska") as it is, anything else as a name in „…”.
+ */
+export function ResourceLabel({ label, className }: { label: string; className?: string }) {
+  if (MACHINE_LABEL.test(label)) return <span className={cn("mono", className)}>{label}</span>;
+  if (/^[#\d]/.test(label)) return <span className={className}>{label}</span>;
+  return <span className={className}>„{label}”</span>;
 }
 
 /** Tags as plain text: "dmz, laboratorium +2". */
