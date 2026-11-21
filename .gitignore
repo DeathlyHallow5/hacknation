@@ -16,3 +16,6 @@ web/.next/
 # Downloaded scanner binaries / templates
 tools/bin/
 tools/nuclei-templates/
+
+# Claude Code agent worktrees (parallel work streams)
+.claude/worktrees/
