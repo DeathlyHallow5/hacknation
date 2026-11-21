@@ -1,0 +1,6 @@
+ip,hostname,port,protocol,service,product,version,title,status_code,observed_at
+10.0.237.40,gpu-01.lab-ai.wydzial-informatyki.uczelnia.example,22,tcp,ssh,OpenSSH,9.6p1,,,2026-11-20T21:14:00Z
+10.0.237.40,gpu-01.lab-ai.wydzial-informatyki.uczelnia.example,8888,tcp,http,Tornado httpd,6.4,Home Page - Select or create a notebook,200,2026-11-20T21:14:00Z
+10.0.237.41,gpu-02.lab-ai.wydzial-informatyki.uczelnia.example,22,tcp,ssh,OpenSSH,9.6p1,,,2026-11-20T21:14:05Z
+10.0.237.41,gpu-02.lab-ai.wydzial-informatyki.uczelnia.example,6006,tcp,http,TensorBoard,2.15,TensorBoard,200,2026-11-20T21:14:05Z
+10.0.233.9,,3306,tcp,mysql,MySQL,5.7.44,,,2026-11-20T21:15:30Z

@@ -1,0 +1,8 @@
+{
+  "targets": [
+    { "value": "10.0.232.0/21", "name": "Laboratoria — środowiska testowe", "owner": "Wydział Informatyki", "criticality": "medium", "tags": ["laboratorium", "staging"] },
+    { "value": "staging.uczelnia.example", "name": "Staging rekrutacji", "owner": "Dział Rekrutacji", "criticality": "medium", "tags": ["staging"] },
+    { "value": "10.0.200.17", "name": "Kamera — brama główna", "owner": "Dział Ochrony Mienia", "criticality": "medium", "tags": ["iot", "monitoring"] },
+    { "value": "nie-domena_!", "name": "Błędny wpis (do testu walidacji)" }
+  ]
+}

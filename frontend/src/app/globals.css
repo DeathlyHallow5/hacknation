@@ -1,0 +1,387 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Themes are switched with <html data-theme="light|dark|contrast">.
+   Chart palettes were checked with the dataviz validator (CVD + contrast). */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+@custom-variant contrast (&:where([data-theme="contrast"], [data-theme="contrast"] *));
+
+/* ------------------------------------------------------------------ */
+/* Tokens                                                              */
+/* ------------------------------------------------------------------ */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Chrome: top bar + hero, always "granat" (navy) like the mockup. */
+  --chrome: #0b1830;
+  --chrome-raised: #12233f;
+  --chrome-line: #22385c;
+  --chrome-ink: #e8eef7;
+  --chrome-ink-2: #9fb0c8;
+  --chrome-dot: rgba(159, 176, 200, 0.13);
+
+  /* Workspace ("papier"). */
+  --canvas: #f2f5f9;
+  --surface: #ffffff;
+  --surface-2: #f7f9fc;
+  --surface-3: #edf1f6;
+  --line: #dce3ec;
+  --line-strong: #c3cedc;
+  --ink: #0e1b2e;
+  --ink-2: #55657c;
+  --ink-3: #8593a7;
+
+  /* "Sygnał" cyan: actions, focus, progress only. */
+  --accent: #1eb2ea;
+  --accent-hover: #4cc3f0;
+  --accent-ink: #06223a;
+  --link: #0a6fa0;
+  --focus: #1eb2ea;
+
+  /* Change-state vocabulary: fill (graphics) / ink (text) / soft (chip bg). */
+  --new: #1f9d57;
+  --new-ink: #0f7a41;
+  --new-soft: #e3f4ea;
+  --changed: #6a56d8;
+  --changed-ink: #5b47c9;
+  --changed-soft: #ece9fb;
+  --gone: #d64550;
+  --gone-ink: #b42a35;
+  --gone-soft: #fbe8e9;
+  --unstable: #e39a1b;
+  --unstable-ink: #8f5300;
+  --unstable-soft: #fcf0da;
+  --inactive: #7d8ba0;
+  --inactive-ink: #556377;
+  --inactive-soft: #ebeff4;
+
+  --danger: #b42a35;
+  --danger-soft: #fbe8e9;
+  --success: #0f7a41;
+  --success-soft: #e3f4ea;
+
+  /* Address-space map (always drawn on navy). */
+  --map-none: #142846;
+  --map-active: #3b7cc9;
+  --map-new: #1fa35e;
+  --map-changed: #8466ee;
+  --map-gone: #e0505a;
+  --map-unstable: #c4860f;
+  --map-inactive: #34425b;
+  --map-excluded: #2a3550;
+
+  /* Sequential ramp (one hue, light -> dark) for magnitudes, e.g. the heatmap. */
+  --seq-0: #eef4fb;
+  --seq-1: #cfe0f5;
+  --seq-2: #9ec2ea;
+  --seq-3: #5f97d6;
+  --seq-4: #2f6cb5;
+  --seq-5: #1b4a85;
+  --data: #3b7cc9;
+
+  --shadow-pop: 0 16px 40px -16px rgba(11, 24, 48, 0.35), 0 2px 6px -2px rgba(11, 24, 48, 0.12);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --chrome: #081325;
+  --chrome-raised: #10203a;
+  --chrome-line: #20365a;
+
+  --canvas: #0c192d;
+  --surface: #12223a;
+  --surface-2: #162944;
+  --surface-3: #1b3050;
+  --line: #233a5d;
+  --line-strong: #2f4b74;
+  --ink: #e8eef7;
+  --ink-2: #9fb0c8;
+  --ink-3: #6f819c;
+
+  --link: #5ccbf5;
+
+  --new: #1fa35e;
+  --new-ink: #5fe39a;
+  --new-soft: rgba(61, 220, 132, 0.12);
+  --changed: #8466ee;
+  --changed-ink: #b9a3ff;
+  --changed-soft: rgba(167, 139, 250, 0.14);
+  --gone: #e0505a;
+  --gone-ink: #ff8a8f;
+  --gone-soft: rgba(255, 107, 107, 0.13);
+  --unstable: #c4860f;
+  --unstable-ink: #f7c35f;
+  --unstable-soft: rgba(245, 184, 61, 0.13);
+  --inactive: #8c9ab0;
+  --inactive-ink: #a9b5c7;
+  --inactive-soft: rgba(140, 154, 176, 0.14);
+
+  --danger: #ff8a8f;
+  --danger-soft: rgba(255, 107, 107, 0.13);
+  --success: #5fe39a;
+  --success-soft: rgba(61, 220, 132, 0.12);
+
+  --seq-0: #172b48;
+  --seq-1: #1d3c66;
+  --seq-2: #255389;
+  --seq-3: #306cae;
+  --seq-4: #4a88d2;
+  --seq-5: #7eabe8;
+  --data: #4a88d2;
+
+  --shadow-pop: 0 18px 48px -12px rgba(0, 0, 0, 0.6), 0 2px 8px -2px rgba(0, 0, 0, 0.4);
+}
+
+/* High contrast ("wersja kontrastowa"): black / white / yellow. */
+[data-theme="contrast"] {
+  color-scheme: dark;
+
+  --chrome: #000000;
+  --chrome-raised: #000000;
+  --chrome-line: #ffffff;
+  --chrome-ink: #ffffff;
+  --chrome-ink-2: #ffffff;
+  --chrome-dot: transparent;
+
+  --canvas: #000000;
+  --surface: #000000;
+  --surface-2: #000000;
+  --surface-3: #111111;
+  --line: #ffffff;
+  --line-strong: #ffffff;
+  --ink: #ffffff;
+  --ink-2: #ffffff;
+  --ink-3: #e6e6e6;
+
+  --accent: #ffe500;
+  --accent-hover: #fff27a;
+  --accent-ink: #000000;
+  --link: #ffe500;
+  --focus: #ffe500;
+
+  --new: #4dff94;
+  --new-ink: #4dff94;
+  --new-soft: #000000;
+  --changed: #d2c4ff;
+  --changed-ink: #d2c4ff;
+  --changed-soft: #000000;
+  --gone: #ff8080;
+  --gone-ink: #ff8080;
+  --gone-soft: #000000;
+  --unstable: #ffd166;
+  --unstable-ink: #ffd166;
+  --unstable-soft: #000000;
+  --inactive: #ffffff;
+  --inactive-ink: #ffffff;
+  --inactive-soft: #000000;
+
+  --danger: #ff8080;
+  --danger-soft: #000000;
+  --success: #4dff94;
+  --success-soft: #000000;
+
+  --seq-0: #1a1a1a;
+  --seq-1: #3a3000;
+  --seq-2: #6b5a00;
+  --seq-3: #a38a00;
+  --seq-4: #d9b800;
+  --seq-5: #ffe500;
+  --data: #ffe500;
+
+  --map-none: #1a1a1a;
+  --map-active: #6fa8ff;
+  --map-inactive: #8a8a8a;
+  --map-excluded: #444444;
+
+  --shadow-pop: 0 0 0 2px #ffffff;
+}
+
+@theme inline {
+  --font-sans: var(--font-ahn), "Segoe UI", system-ui, sans-serif;
+  --font-mono: var(--font-ahm), "Cascadia Mono", ui-monospace, monospace;
+
+  --color-chrome: var(--chrome);
+  --color-chrome-raised: var(--chrome-raised);
+  --color-chrome-line: var(--chrome-line);
+  --color-chrome-ink: var(--chrome-ink);
+  --color-chrome-ink-2: var(--chrome-ink-2);
+
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-ink: var(--accent-ink);
+  --color-link: var(--link);
+  --color-focus: var(--focus);
+
+  --color-new: var(--new);
+  --color-new-ink: var(--new-ink);
+  --color-new-soft: var(--new-soft);
+  --color-changed: var(--changed);
+  --color-changed-ink: var(--changed-ink);
+  --color-changed-soft: var(--changed-soft);
+  --color-gone: var(--gone);
+  --color-gone-ink: var(--gone-ink);
+  --color-gone-soft: var(--gone-soft);
+  --color-unstable: var(--unstable);
+  --color-unstable-ink: var(--unstable-ink);
+  --color-unstable-soft: var(--unstable-soft);
+  --color-inactive: var(--inactive);
+  --color-inactive-ink: var(--inactive-ink);
+  --color-inactive-soft: var(--inactive-soft);
+
+  --color-data: var(--data);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+
+  --shadow-pop: var(--shadow-pop);
+
+  --animate-sweep-in: sweep-in 0.9s ease-out both;
+  --animate-pulse-dot: pulse-dot 1.8s ease-in-out infinite;
+  --animate-shimmer: shimmer 1.4s linear infinite;
+  --animate-indeterminate: indeterminate 1.2s ease-in-out infinite;
+}
+
+/* ------------------------------------------------------------------ */
+/* Base                                                                */
+/* ------------------------------------------------------------------ */
+html {
+  font-size: 100%;
+  -webkit-text-size-adjust: 100%;
+}
+html[data-text="lg"] {
+  font-size: 112.5%;
+}
+html[data-text="xl"] {
+  font-size: 125%;
+}
+
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-ahn), "Segoe UI", system-ui, sans-serif;
+  font-feature-settings: "kern";
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+[data-theme="contrast"] :focus-visible {
+  outline-width: 4px;
+}
+
+[data-theme="contrast"] a {
+  text-decoration: underline;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Machine values (IP, ports, hashes, headers) use the mono face. */
+.mono {
+  font-family: var(--font-ahm), "Cascadia Mono", ui-monospace, monospace;
+  font-variant-ligatures: none;
+  letter-spacing: -0.01em;
+}
+
+/* Dotted texture of the hero, as in the mockup. */
+.chrome-dots {
+  background-image: radial-gradient(var(--chrome-dot) 1px, transparent 1.2px);
+  background-size: 18px 18px;
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-3) 0%,
+    color-mix(in srgb, var(--surface-3) 55%, var(--surface)) 50%,
+    var(--surface-3) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: 6px;
+}
+.on-chrome .skeleton {
+  background: linear-gradient(90deg, #17294a 0%, #1e3459 50%, #17294a 100%);
+  background-size: 200% 100%;
+}
+
+/* Thin, quiet scrollbars inside panels. */
+.scroll-quiet {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+@keyframes sweep-in {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+html[data-motion="reduce"] *,
+html[data-motion="reduce"] ::before,
+html[data-motion="reduce"] ::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
