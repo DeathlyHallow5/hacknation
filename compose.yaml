@@ -70,6 +70,20 @@ services:
     networks:
       lab:
         ipv4_address: 172.30.0.11
+  # "Infrastructure change" for the 2nd demo run (docker compose --profile lab2 up -d):
+  # a new host exposing an admin login on a staging page.
+  lab-admin:
+    profiles: [lab2]
+    image: nginx:1.27-alpine
+    command:
+      - sh
+      - -c
+      - >-
+        printf '<html><head><title>Admin login - staging</title></head><body>Panel administracyjny</body></html>'
+        > /usr/share/nginx/html/index.html && exec nginx -g 'daemon off;'
+    networks:
+      lab:
+        ipv4_address: 172.30.0.12
 
 networks:
   lab:

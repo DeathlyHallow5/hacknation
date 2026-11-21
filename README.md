@@ -25,13 +25,38 @@ docker compose --profile lab up -d           # + тестовая лаба 172.3
 ```
 
 - Дашборд: http://localhost:3000
-- API: http://localhost:8000/api/health · `/api/tools` · `/api/targets` · `/api/scans`
+- API (http://localhost:8000/api):
 
-Пример импорта целей:
+| Метод | Путь | Что |
+|-------|------|-----|
+| GET | `/health`, `/tools` | состояние, установленные сканеры |
+| GET/POST | `/targets` | список / импорт целей (текст, CSV: первая колонка) |
+| GET/POST | `/scans` | список / создание скана (цели + rate, окно, повтор, порты, батч) |
+| POST | `/scans/{id}/run` | запустить скан сейчас (новый прогон) |
+| GET | `/scans/{id}/runs` | прогоны скана |
+| GET | `/runs/{id}` | статус, прогресс, ETA, статистика |
+| GET | `/runs/{id}/findings` | хосты → сервисы → HTTP-находки (зашифрованные поля расшифрованы) |
+| POST | `/runs/{id}/cancel` | остановить прогон |
+
+### Демо на лабе
 
 ```bash
-curl -s localhost:8000/api/targets -H 'Content-Type: application/json' \
-  -d '{"text":"172.30.0.0/24\nexample.com\n10.0.0.5"}'
+docker compose --profile lab up -d
+scripts/lab-scan.sh demo                                  # прогон 1: nginx .10, Apache .11
+docker compose --profile lab stop lab-httpd               # "изменение инфраструктуры"
+docker compose --profile lab2 up -d lab-admin             # новый хост: админка на staging (.12)
+curl -XPOST localhost:8000/api/scans/<scan_id>/run        # прогон 2 того же скана
+# окно с паузой/возобновлением:
+scripts/lab-scan.sh "window" '"window_minutes":1,"repeat_every_minutes":2,"batch_size":4,"rate_limit_pps":5'
+```
+
+Пример создания скана:
+
+```bash
+curl -s localhost:8000/api/scans -H 'Content-Type: application/json' -d '{
+  "name": "uczelnia", "targets": "10.0.0.0/20\nexample.com",
+  "rate_limit_pps": 200, "window_minutes": 120, "repeat_every_minutes": 1440,
+  "ports": "100", "batch_size": 256 }'
 ```
 
 ## Разработка без Docker
@@ -50,10 +75,16 @@ cd web && npm ci && ASI_API_INTERNAL_URL=http://127.0.0.1:8000 npm run dev
 - `dev` — вся работа.
 - `main` — только по команде владельца репозитория.
 
-## Статус скелета
+## Статус
 
-Готово: схема БД, нормализация IP/CIDR/доменов (+тесты), матрица RBAC (+тесты), базовый diff (+тесты),
-запуск внешних движков с таймаутом, API health/tools/targets/scans, Compose.
+**Пайплайн A (скан) — готов, проверен на лабе:** pre-flight (`nmap -sn`) → порты (`naabu`, connect) →
+сервисы (`nmap -sV`) → HTTP/HTTPS (`httpx`: title, код, заголовки, cookie, TLS, редиректы, технологии) →
+CMS/админка/staging → Postgres (чувствительные поля и сырые выводы зашифрованы `pgp_sym_encrypt`).
+Планировщик: повтор каждые N минут, временные окна с паузой и продолжением с чекпоинта,
+адаптивный размер батча по измеренной скорости, ETA, восстановление после рестарта, отмена.
+
+Дальше: Diff Engine + Inactive (B), RBAC/логин и экраны фронта (C), экспорт в DefectDojo
+(сырые выводы уже хранятся в `run_artifacts`), кастомные сигнатуры.
 Фронт пока UI SWOT — экраны переводятся на новый API (`/scanners` ещё не существует, это ожидаемо).
 
 ## Лицензия

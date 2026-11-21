@@ -10,8 +10,10 @@ pub struct Config {
     pub data_key: String,
     /// Directory with nmap / ProjectDiscovery binaries.
     pub tools_dir: String,
-    /// Upper bound of concurrent host probes across all scans.
+    /// Worker threads handed to naabu/httpx (capped at 100).
     pub max_concurrency: usize,
+    /// Scan runs executing at the same time. Total rate ≈ max_runs × rate_limit_pps.
+    pub max_runs: usize,
     pub defectdojo_url: Option<String>,
     pub defectdojo_token: Option<String>,
 }
@@ -27,6 +29,11 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(256),
+            max_runs: std::env::var("ASI_MAX_RUNS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|n| *n > 0)
+                .unwrap_or(2),
             defectdojo_url: std::env::var("DEFECTDOJO_URL").ok().filter(|v| !v.is_empty()),
             defectdojo_token: std::env::var("DEFECTDOJO_TOKEN").ok().filter(|v| !v.is_empty()),
         })

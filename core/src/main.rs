@@ -5,8 +5,12 @@ mod api;
 mod config;
 mod diff;
 mod engine;
+mod fingerprint;
 mod input;
+mod parse;
+mod pipeline;
 mod rbac;
+mod scheduler;
 
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
@@ -35,6 +39,7 @@ async fn main() -> Result<()> {
 
     let addr = config.bind_addr.clone();
     let state = AppState { db, config: Arc::new(config) };
+    tokio::spawn(scheduler::run(state.clone()));
     let app = api::router(state).layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
