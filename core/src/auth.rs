@@ -62,7 +62,7 @@ pub struct ClientIp(pub Option<IpAddr>);
 
 // ---------- passwords and tokens ----------
 
-fn check_password_policy(password: &str) -> Result<(), ApiError> {
+pub(crate) fn check_password_policy(password: &str) -> Result<(), ApiError> {
     if !PASSWORD_LEN.contains(&password.chars().count()) {
         return Err(bad(format!(
             "password must be {}..={} characters",
@@ -89,7 +89,7 @@ static DUMMY_HASH: LazyLock<String> =
     LazyLock::new(|| hash_password("not a real password, timing only").expect("argon2 works"));
 
 /// Argon2 is deliberately slow: keep it off the async workers.
-async fn hash_blocking(password: String) -> Result<String, ApiError> {
+pub(crate) async fn hash_blocking(password: String) -> Result<String, ApiError> {
     tokio::task::spawn_blocking(move || hash_password(&password)).await.map_err(internal)?.map_err(internal)
 }
 
@@ -151,7 +151,7 @@ async fn session_user(db: &sqlx::PgPool, token: &str) -> sqlx::Result<Option<Cur
     }))
 }
 
-async fn revoke_sessions(conn: &mut sqlx::PgConnection, user_id: Uuid) -> sqlx::Result<()> {
+pub(crate) async fn revoke_sessions(conn: &mut sqlx::PgConnection, user_id: Uuid) -> sqlx::Result<()> {
     sqlx::query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL")
         .bind(user_id)
         .execute(conn)
@@ -330,7 +330,7 @@ pub struct UserOut {
 const USER_COLUMNS: &str = "id, username, role, disabled, can_execute_scans, created_at, updated_at, last_login_at";
 
 /// Logins: 3..=64 of a-z 0-9 . _ - (lower-cased), starting with a letter or digit.
-fn normalize_username(name: &str) -> Result<String, ApiError> {
+pub(crate) fn normalize_username(name: &str) -> Result<String, ApiError> {
     let name = name.trim().to_ascii_lowercase();
     let ok = (3..=64).contains(&name.len())
         && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b))
@@ -553,7 +553,7 @@ pub struct PatchUser {
 
 /// Refuse a change that would leave no active admin. Locks the admin rows, so two
 /// concurrent demotions cannot both pass.
-async fn keep_an_admin(conn: &mut sqlx::PgConnection, target: Uuid) -> Result<(), ApiError> {
+pub(crate) async fn keep_an_admin(conn: &mut sqlx::PgConnection, target: Uuid) -> Result<(), ApiError> {
     let admins: Vec<Uuid> =
         sqlx::query_scalar("SELECT id FROM users WHERE role = 'admin' AND NOT disabled ORDER BY id FOR UPDATE")
             .fetch_all(conn)

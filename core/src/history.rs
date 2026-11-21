@@ -118,11 +118,18 @@ fn not_comparable(a: &Loaded, b: &Loaded, cov_a: &Coverage, cov_b: &Coverage) ->
         .collect()
 }
 
-/// Previous finished run of the same scan.
+/// Previous finished run to compare with: of the same scan, or of another scan that covered
+/// exactly the same targets with the same ports (the dashboard starts every scan as a new
+/// one, and "what changed since we last looked at these addresses" is the question). Runs
+/// with other targets or ports are never mixed in: their differences would be coverage,
+/// not changes.
 pub async fn previous_run(db: &PgPool, run_id: Uuid) -> sqlx::Result<Option<Uuid>> {
     sqlx::query_scalar(
-        "SELECT p.id FROM scan_runs p JOIN scan_runs c ON c.scan_id = p.scan_id
-         WHERE c.id = $1 AND p.id <> c.id AND p.status = 'done' AND p.started_at < c.started_at
+        "SELECT p.id FROM scan_runs p JOIN scan_runs c ON c.id = $1
+         WHERE p.id <> c.id AND p.status = 'done' AND p.started_at < c.started_at
+           AND (p.scan_id = c.scan_id
+                OR (p.target_snapshot = c.target_snapshot
+                    AND p.config_snapshot->>'ports' = c.config_snapshot->>'ports'))
          ORDER BY p.started_at DESC LIMIT 1",
     )
     .bind(run_id)

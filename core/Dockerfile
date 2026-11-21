@@ -12,6 +12,7 @@ WORKDIR /src
 COPY core/Cargo.toml core/Cargo.lock ./
 RUN mkdir src && echo 'fn main() {}' > src/main.rs && cargo build --release && rm -rf src
 COPY core/migrations ./migrations
+COPY core/signatures ./signatures
 COPY core/src ./src
 RUN touch src/main.rs && cargo build --release
 

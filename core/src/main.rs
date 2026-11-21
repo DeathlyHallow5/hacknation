@@ -15,7 +15,11 @@ mod parse;
 mod pipeline;
 mod rbac;
 mod scheduler;
+mod signatures;
 mod v1;
+mod v1_admin;
+mod v1_assets;
+mod v1_scans;
 
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
@@ -44,6 +48,8 @@ async fn main() -> Result<()> {
         .await?;
     sqlx::migrate!("./migrations").run(&db).await?;
     auth::bootstrap_admin(&db, &config).await?;
+    let builtin = signatures::seed_builtin(&db).await?;
+    tracing::info!(builtin, "built-in signatures loaded");
 
     let addr = config.bind_addr.clone();
     let state = AppState { db, config: Arc::new(config), limiter: Arc::default() };

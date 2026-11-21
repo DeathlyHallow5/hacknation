@@ -34,36 +34,36 @@ use uuid::Uuid;
 
 // ---------- errors and helpers ----------
 
-fn err(status: StatusCode, code: &str, message: impl Into<String>) -> ApiError {
+pub(crate) fn err(status: StatusCode, code: &str, message: impl Into<String>) -> ApiError {
     let message = message.into();
     (status, Json(json!({ "error": { "code": code, "message": message }, "detail": message })))
 }
 
-fn invalid(message: impl Into<String>) -> ApiError {
+pub(crate) fn invalid(message: impl Into<String>) -> ApiError {
     err(StatusCode::UNPROCESSABLE_ENTITY, "validation", message)
 }
 
-fn missing() -> ApiError {
+pub(crate) fn missing() -> ApiError {
     err(StatusCode::NOT_FOUND, "not_found", "Nie znaleziono.")
 }
 
-fn fail(e: impl std::fmt::Display) -> ApiError {
+pub(crate) fn fail(e: impl std::fmt::Display) -> ApiError {
     tracing::error!("v1: {e}");
     err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "Błąd serwera. Szczegóły w logach.")
 }
 
-fn forbidden() -> ApiError {
+pub(crate) fn forbidden() -> ApiError {
     err(StatusCode::FORBIDDEN, "forbidden", "Twoja rola nie ma uprawnienia do tej operacji.")
 }
 
-type V1<T> = Result<T, ApiError>;
+pub(crate) type V1<T> = Result<T, ApiError>;
 
 /// Empty query values (`?q=`) mean "no filter".
-fn opt(v: &Option<String>) -> Option<&str> {
+pub(crate) fn opt(v: &Option<String>) -> Option<&str> {
     v.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
-fn paginated<T: Serialize>(mut items: Vec<T>, page: Option<usize>, page_size: Option<usize>) -> Value {
+pub(crate) fn paginated<T: Serialize>(mut items: Vec<T>, page: Option<usize>, page_size: Option<usize>) -> Value {
     let page_size = page_size.unwrap_or(25).clamp(1, 500);
     let page = page.unwrap_or(1).max(1);
     let total = items.len();
@@ -74,7 +74,7 @@ fn paginated<T: Serialize>(mut items: Vec<T>, page: Option<usize>, page_size: Op
 }
 
 /// `-field` = descending.
-fn sort_spec(sort: Option<&str>, default: &str) -> (String, bool) {
+pub(crate) fn sort_spec(sort: Option<&str>, default: &str) -> (String, bool) {
     let s = sort.unwrap_or(default);
     match s.strip_prefix('-') {
         Some(f) => (f.to_string(), true),
@@ -83,11 +83,11 @@ fn sort_spec(sort: Option<&str>, default: &str) -> (String, bool) {
 }
 
 /// CSV cells that a spreadsheet would run as a formula get a leading apostrophe.
-fn csv_text(s: &str) -> String {
+pub(crate) fn csv_text(s: &str) -> String {
     if s.starts_with(['=', '+', '-', '@', '\t', '\r']) { format!("'{s}") } else { s.to_string() }
 }
 
-fn file(content_type: &str, filename: &str, body: Vec<u8>, note: Note) -> Response {
+pub(crate) fn file(content_type: &str, filename: &str, body: Vec<u8>, note: Note) -> Response {
     (
         [
             (header::CONTENT_TYPE, content_type.to_string()),
@@ -100,7 +100,7 @@ fn file(content_type: &str, filename: &str, body: Vec<u8>, note: Note) -> Respon
 }
 
 /// Trimmed text or None; length and control characters checked.
-fn text(v: Option<&str>, field: &str, max: usize, multiline: bool) -> V1<Option<String>> {
+pub(crate) fn text(v: Option<&str>, field: &str, max: usize, multiline: bool) -> V1<Option<String>> {
     crate::overlay::text(v, field, max, multiline).map_err(|(_, Json(b))| invalid(b["detail"].as_str().unwrap_or(field).to_string()))
 }
 
@@ -110,7 +110,7 @@ fn criticality_rank(c: &str) -> usize {
     CRITICALITY.iter().position(|x| *x == c).unwrap_or(1)
 }
 
-fn clean_tags(tags: &[String]) -> V1<Vec<String>> {
+pub(crate) fn clean_tags(tags: &[String]) -> V1<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for t in tags {
         if let Some(t) = text(Some(t), "tag", 64, false)? {
@@ -127,12 +127,12 @@ fn clean_tags(tags: &[String]) -> V1<Vec<String>> {
 }
 
 /// Latest finished run of every scan (the "current state").
-const LATEST: &str = "SELECT DISTINCT ON (scan_id) id, scan_id, started_at, finished_at FROM scan_runs
+pub(crate) const LATEST: &str = "SELECT DISTINCT ON (scan_id) id, scan_id, started_at, finished_at FROM scan_runs
     WHERE status IN ('done', 'partial') ORDER BY scan_id, started_at DESC";
 
 // ---------- sessions and roles ----------
 
-fn role_meta(role: Role) -> (&'static str, &'static str, &'static str) {
+pub(crate) fn role_meta(role: Role) -> (&'static str, &'static str, &'static str) {
     match role {
         Role::Admin => ("admin", "Administrator", "Administracja — pełny dostęp, użytkownicy i integracje"),
         Role::Editor => ("operator", "Operator", "Dodawanie, usuwanie i modyfikacja"),
@@ -142,7 +142,7 @@ fn role_meta(role: Role) -> (&'static str, &'static str, &'static str) {
 }
 
 /// Contract permissions granted by the core RBAC (`rbac::Role::can`).
-fn permissions(user: &CurrentUser) -> Vec<&'static str> {
+pub(crate) fn permissions(user: &CurrentUser) -> Vec<&'static str> {
     let mut p = Vec::new();
     let mut grant = |action: Action, keys: &[&'static str]| {
         if user.can(action) {
@@ -234,23 +234,23 @@ pub async fn me(State(s): State<AppState>, Extension(user): Extension<CurrentUse
 
 #[derive(Serialize, Clone)]
 pub struct TargetOut {
-    id: Uuid,
-    value: String,
+    pub(crate) id: Uuid,
+    pub(crate) value: String,
     #[serde(rename = "type")]
-    kind: String,
-    address_count: u64,
-    name: Option<String>,
-    owner: Option<String>,
-    criticality: String,
-    tags: Vec<String>,
-    notes: Option<String>,
-    excluded: bool,
-    source: String,
-    active_hosts: i64,
-    last_scanned_at: Option<DateTime<Utc>>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-    updated_by: Option<String>,
+    pub(crate) kind: String,
+    pub(crate) address_count: u64,
+    pub(crate) name: Option<String>,
+    pub(crate) owner: Option<String>,
+    pub(crate) criticality: String,
+    pub(crate) tags: Vec<String>,
+    pub(crate) notes: Option<String>,
+    pub(crate) excluded: bool,
+    pub(crate) source: String,
+    pub(crate) active_hosts: i64,
+    pub(crate) last_scanned_at: Option<DateTime<Utc>>,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) updated_at: DateTime<Utc>,
+    pub(crate) updated_by: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -282,7 +282,7 @@ fn address_count(kind: &str, value: &str) -> u64 {
 }
 
 /// `$1` data key; optional `$2` = only these ids.
-async fn load_targets(db: &sqlx::PgPool, key: &str, ids: Option<&[Uuid]>) -> V1<Vec<TargetOut>> {
+pub(crate) async fn load_targets(db: &sqlx::PgPool, key: &str, ids: Option<&[Uuid]>) -> V1<Vec<TargetOut>> {
     let rows = sqlx::query_as::<_, TargetRow>(sqlx::AssertSqlSafe(format!(
         "WITH latest AS ({LATEST})
          SELECT t.id, t.value, t.kind::text AS kind, t.label AS name, t.owner, t.criticality, t.tags,
@@ -930,27 +930,38 @@ pub async fn export_targets(State(s): State<AppState>, Query(q): Query<FormatQue
 // ---------- scan runs ----------
 
 #[derive(sqlx::FromRow)]
-struct RunRow {
-    id: Uuid,
-    number: i64,
-    name: String,
-    status: String,
-    started_at: DateTime<Utc>,
-    finished_at: Option<DateTime<Utc>>,
-    resume_at: Option<DateTime<Utc>>,
-    window_started_at: Option<DateTime<Utc>>,
-    total_batches: Option<i32>,
-    error: Option<String>,
-    stats: Value,
-    rate_limit_pps: i32,
-    window_minutes: Option<i32>,
-    created_by: Option<String>,
-    target_ids: Option<Vec<Uuid>>,
-    targets_label: Option<String>,
-    unstable: i64,
+pub(crate) struct RunRow {
+    pub(crate) id: Uuid,
+    pub(crate) number: i64,
+    pub(crate) name: String,
+    pub(crate) status: String,
+    pub(crate) started_at: DateTime<Utc>,
+    pub(crate) finished_at: Option<DateTime<Utc>>,
+    pub(crate) resume_at: Option<DateTime<Utc>>,
+    pub(crate) window_started_at: Option<DateTime<Utc>>,
+    pub(crate) total_batches: Option<i32>,
+    pub(crate) error: Option<String>,
+    pub(crate) stats: Value,
+    pub(crate) rate_limit_pps: i32,
+    pub(crate) window_minutes: Option<i32>,
+    pub(crate) created_by: Option<String>,
+    pub(crate) target_ids: Option<Vec<Uuid>>,
+    pub(crate) targets_label: Option<String>,
+    pub(crate) unstable: i64,
+    pub(crate) scan_id: Uuid,
+    pub(crate) profile_id: Option<Uuid>,
+    pub(crate) profile_name: Option<String>,
+    pub(crate) is_schedule: bool,
+    pub(crate) window_start: Option<String>,
+    pub(crate) window_end: Option<String>,
+    pub(crate) timezone: String,
+    pub(crate) tags: Vec<String>,
+    pub(crate) notes: Option<String>,
+    pub(crate) source: String,
+    pub(crate) queued: bool,
 }
 
-const RUNS: &str = "SELECT * FROM (
+pub(crate) const RUNS: &str = "SELECT * FROM (
     SELECT r.id, row_number() OVER (ORDER BY r.started_at) AS number, s.name, r.status::text AS status,
            r.started_at, r.finished_at, r.resume_at, r.window_started_at, r.total_batches, r.error, r.stats,
            COALESCE((r.config_snapshot->>'rate_limit_pps')::int, s.rate_limit_pps) AS rate_limit_pps,
@@ -959,15 +970,20 @@ const RUNS: &str = "SELECT * FROM (
            (SELECT array_agg(st.target_id) FROM scan_targets st WHERE st.scan_id = r.scan_id) AS target_ids,
            (SELECT string_agg(t.value, ', ' ORDER BY t.value) FROM scan_targets st JOIN targets t ON t.id = st.target_id
              WHERE st.scan_id = r.scan_id) AS targets_label,
-           (SELECT count(*) FROM hosts h WHERE h.run_id = r.id AND h.state = 'unstable') AS unstable
+           (SELECT count(*) FROM hosts h WHERE h.run_id = r.id AND h.state = 'unstable') AS unstable,
+           r.scan_id, s.profile_id, p.name AS profile_name, s.is_schedule,
+           to_char(s.window_start, 'HH24:MI') AS window_start, to_char(s.window_end, 'HH24:MI') AS window_end,
+           s.timezone, r.tags, r.notes, r.source,
+           (r.status = 'paused' AND r.resume_at IS NOT NULL AND r.resume_at <= now()) AS queued
     FROM scan_runs r JOIN scans s ON s.id = r.scan_id LEFT JOIN users u ON u.id = s.created_by
+    LEFT JOIN scan_profiles p ON p.id = s.profile_id
 ) runs";
 
-fn f(v: &Value, k: &str) -> f64 {
+pub(crate) fn f(v: &Value, k: &str) -> f64 {
     v.get(k).and_then(Value::as_f64).unwrap_or(0.0)
 }
 
-fn run_json(r: &RunRow) -> Value {
+pub(crate) fn run_json(r: &RunRow) -> Value {
     let st = &r.stats;
     let total = f(st, "hosts_total");
     let done = f(st, "hosts_done");
@@ -975,6 +991,8 @@ fn run_json(r: &RunRow) -> Value {
     let diff = st.get("diff").cloned().unwrap_or(Value::Null);
     let status = match r.status.as_str() {
         "done" | "partial" => "completed",
+        // Waiting for the scheduler to pick it up (it polls every few seconds).
+        "paused" if r.queued => "queued",
         "paused" if r.resume_at.is_some() => "paused_window",
         other => other,
     };
@@ -986,20 +1004,25 @@ fn run_json(r: &RunRow) -> Value {
     let label = r.targets_label.clone().unwrap_or_default();
     let label = if label.chars().count() > 80 { format!("{}…", label.chars().take(80).collect::<String>()) } else { label };
     let window_ends_at = match (r.window_started_at, r.window_minutes, status) {
-        (Some(ws), Some(m), "running") => Some(ws + chrono::Duration::minutes(m as i64)),
+        (Some(ws), Some(m), "running") if r.window_start.is_none() => Some(ws + chrono::Duration::minutes(m as i64)),
         _ => None,
+    };
+    let window = match (&r.window_start, &r.window_end) {
+        (Some(a), Some(b)) => json!({ "start": a, "end": b, "timezone": r.timezone }),
+        _ => Value::Null,
     };
     json!({
         "id": r.id, "number": r.number, "name": r.name, "status": status,
         "phase": if status == "running" { Some("discovery") } else { None },
-        "source": "scanner", "profile_id": null, "profile_name": null, "schedule_id": null,
+        "source": r.source, "profile_id": r.profile_id, "profile_name": r.profile_name,
+        "schedule_id": if r.is_schedule { Some(r.scan_id) } else { None },
         "target_ids": r.target_ids.clone().unwrap_or_default(), "targets_label": label,
         "address_count": total as u64,
         "progress": if total > 0.0 { (done / total).min(1.0) } else if status == "completed" { 1.0 } else { 0.0 },
         "batches_total": r.total_batches.unwrap_or(0), "batches_done": f(st, "batches_done") as u64,
         "rate_rps": if elapsed > 0.0 { (done / elapsed * 10.0).round() / 10.0 } else { 0.0 },
         "rate_limit_rps": r.rate_limit_pps,
-        "window": null, "window_ends_at": window_ends_at, "resume_at": r.resume_at,
+        "window": window, "window_ends_at": window_ends_at, "resume_at": r.resume_at,
         "windows_used": f(st, "pauses") as u64 + 1,
         "started_at": r.started_at, "finished_at": r.finished_at, "duration_s": elapsed.round() as u64,
         "eta_s": st.get("eta_secs").cloned().unwrap_or(Value::Null),
@@ -1009,11 +1032,11 @@ fn run_json(r: &RunRow) -> Value {
             "new": f(&diff, "new") as u64, "changed": f(&diff, "changed") as u64, "gone": f(&diff, "gone") as u64,
             "unstable": r.unstable,
         },
-        "error": error, "tags": [], "notes": null, "created_by": r.created_by.clone().unwrap_or_else(|| "system".into()),
+        "error": error, "tags": r.tags, "notes": r.notes, "created_by": r.created_by.clone().unwrap_or_else(|| "system".into()),
     })
 }
 
-async fn load_runs(db: &sqlx::PgPool, filter: &str, limit: i64) -> V1<Vec<RunRow>> {
+pub(crate) async fn load_runs(db: &sqlx::PgPool, filter: &str, limit: i64) -> V1<Vec<RunRow>> {
     sqlx::query_as::<_, RunRow>(sqlx::AssertSqlSafe(format!("{RUNS} {filter} ORDER BY started_at DESC LIMIT $1")))
         .bind(limit)
         .fetch_all(db)
@@ -1025,55 +1048,43 @@ async fn load_runs(db: &sqlx::PgPool, filter: &str, limit: i64) -> V1<Vec<RunRow
 pub struct PageQuery {
     page: Option<usize>,
     page_size: Option<usize>,
-    status: Option<String>,
-}
-
-/// `GET /api/v1/scans` — scan runs, newest first.
-pub async fn list_scans(State(s): State<AppState>, Query(q): Query<PageQuery>) -> V1<Json<Value>> {
-    let runs = load_runs(&s.db, "", 5000).await?;
-    let mut items: Vec<Value> = runs.iter().map(run_json).collect();
-    if let Some(st) = opt(&q.status) {
-        let wanted: Vec<&str> = st.split(',').map(str::trim).collect();
-        items.retain(|r| r["status"].as_str().is_some_and(|s| wanted.contains(&s)));
-    }
-    Ok(Json(paginated(items, q.page, q.page_size)))
 }
 
 // ---------- findings ----------
 
 #[derive(Serialize, Clone)]
 pub struct Finding {
-    id: Uuid,
-    title: String,
-    category: &'static str,
-    host_id: Uuid,
-    ip: String,
-    hostname: Option<String>,
-    port: Option<i32>,
-    service_id: Option<Uuid>,
-    service_label: Option<String>,
-    technologies: Vec<String>,
-    change: String,
-    status: String,
-    score: i32,
-    score_override: Option<i16>,
-    score_breakdown: Vec<Value>,
-    confidence: f32,
-    measurements: Value,
-    evidence: Vec<Value>,
-    signature_id: Option<String>,
-    signature_name: Option<String>,
-    assignee: Option<String>,
-    tags: Vec<String>,
-    notes: Option<String>,
-    manual_overrides: Value,
-    defectdojo: Option<Value>,
-    first_seen: DateTime<Utc>,
-    last_seen: DateTime<Utc>,
+    pub(crate) id: Uuid,
+    pub(crate) title: String,
+    pub(crate) category: &'static str,
+    pub(crate) host_id: Uuid,
+    pub(crate) ip: String,
+    pub(crate) hostname: Option<String>,
+    pub(crate) port: Option<i32>,
+    pub(crate) service_id: Option<Uuid>,
+    pub(crate) service_label: Option<String>,
+    pub(crate) technologies: Vec<String>,
+    pub(crate) change: String,
+    pub(crate) status: String,
+    pub(crate) score: i32,
+    pub(crate) score_override: Option<i16>,
+    pub(crate) score_breakdown: Vec<Value>,
+    pub(crate) confidence: f32,
+    pub(crate) measurements: Value,
+    pub(crate) evidence: Vec<Value>,
+    pub(crate) signature_id: Option<String>,
+    pub(crate) signature_name: Option<String>,
+    pub(crate) assignee: Option<String>,
+    pub(crate) tags: Vec<String>,
+    pub(crate) notes: Option<String>,
+    pub(crate) manual_overrides: Value,
+    pub(crate) defectdojo: Option<Value>,
+    pub(crate) first_seen: DateTime<Utc>,
+    pub(crate) last_seen: DateTime<Utc>,
     #[serde(skip)]
-    scan_id: Uuid,
+    pub(crate) scan_id: Uuid,
     #[serde(skip)]
-    entity_key: String,
+    pub(crate) entity_key: String,
 }
 
 impl Finding {
@@ -1117,10 +1128,29 @@ struct StateRow {
     assignee: Option<String>,
     tags: Vec<String>,
     notes: Option<String>,
+    defectdojo: Option<Value>,
+}
+
+/// (category, entity key, title, base score, evidence, signature id + name)
+type Candidate = (&'static str, String, String, i32, Vec<Value>, Option<(Uuid, String)>);
+
+/// Contract category of a signature (`technology` → `signature`).
+fn finding_category(c: &str) -> &'static str {
+    match c {
+        "admin_panel" => "admin_panel",
+        "staging" => "staging",
+        "outdated" => "outdated",
+        "header" => "header",
+        "cookie" => "cookie",
+        "tls" => "tls",
+        "exposure" => "exposure",
+        "iot" => "iot",
+        _ => "signature",
+    }
 }
 
 /// Stable id of a derived finding.
-fn finding_id(scan_id: Uuid, category: &str, key: &str) -> Uuid {
+pub(crate) fn finding_id(scan_id: Uuid, category: &str, key: &str) -> Uuid {
     Uuid::new_v5(&Uuid::NAMESPACE_URL, format!("asi:{scan_id}:{category}:{key}").as_bytes())
 }
 
@@ -1137,7 +1167,7 @@ fn tech_name(t: &str) -> String {
 }
 
 /// Derive findings from the latest finished run of every scan.
-async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Finding>> {
+pub(crate) async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Finding>> {
     let rows = sqlx::query_as::<_, ObsRow>(sqlx::AssertSqlSafe(format!(
         "WITH latest AS ({LATEST})
          SELECT l.scan_id, l.id AS run_id, h.id AS host_id, host(h.address) AS ip, h.hostname, h.state::text AS state,
@@ -1174,7 +1204,7 @@ async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Finding>> {
     .map(|(scan, ip, up, total)| ((scan, ip), (up, total)))
     .collect();
     let states: HashMap<Uuid, StateRow> = sqlx::query_as::<_, StateRow>(
-        "SELECT finding_id, status, score_override, assignee, tags, pgp_sym_decrypt(notes_enc, $1) AS notes
+        "SELECT finding_id, status, score_override, assignee, tags, pgp_sym_decrypt(notes_enc, $1) AS notes, defectdojo
          FROM finding_states",
     )
     .bind(key)
@@ -1209,6 +1239,10 @@ async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Finding>> {
     }
 
     let mut out: Vec<Finding> = Vec::new();
+    let mut hits_by_service: HashMap<Uuid, Vec<crate::signatures::Hit>> = HashMap::new();
+    for h in crate::signatures::latest_hits(db, key).await.map_err(fail)? {
+        hits_by_service.entry(h.service_id).or_default().push(h);
+    }
     let mut seen: HashSet<Uuid> = HashSet::new();
     for r in &rows {
         let host_change = changes.get(&(r.run_id, "host".into(), r.ip.clone()));
@@ -1224,7 +1258,7 @@ async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Finding>> {
             r.service.as_deref().map(str::to_uppercase).unwrap_or_else(|| r.protocol.to_uppercase())
         );
         let (responded, total) = measured.get(&(r.scan_id, r.ip.clone())).copied().unwrap_or((1, 1));
-        let mut candidates: Vec<(&'static str, String, String, i32, Vec<Value>)> = Vec::new();
+        let mut candidates: Vec<Candidate> = Vec::new();
         if let Some(url) = &r.url {
             let title = r.title.clone().unwrap_or_else(|| url.clone());
             let ev = vec![
@@ -1232,10 +1266,10 @@ async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Finding>> {
                 json!({ "type": "path", "label": "Adres", "snippet": url, "highlight": null }),
             ];
             if r.is_admin == Some(true) {
-                candidates.push(("admin_panel", url.clone(), format!("Panel administracyjny: {title}"), 60, ev.clone()));
+                candidates.push(("admin_panel", url.clone(), format!("Panel administracyjny: {title}"), 60, ev.clone(), None));
             }
             if r.is_staging == Some(true) {
-                candidates.push(("staging", url.clone(), format!("Środowisko testowe (staging): {url}"), 45, ev));
+                candidates.push(("staging", url.clone(), format!("Środowisko testowe (staging): {url}"), 45, ev, None));
             }
         }
         if RISKY_PORTS.contains(&(r.port as u16)) {
@@ -1250,14 +1284,36 @@ async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Finding>> {
                 format!("Usługa {} dostępna z sieci ({}/{})", r.service.as_deref().unwrap_or("?"), r.port, r.protocol),
                 50,
                 vec![json!({ "type": "banner", "label": "Usługa (nmap)", "snippet": what, "highlight": null })],
+                None,
             ));
         }
-        for (category, entity_key, title, base, evidence) in candidates {
+        // Matches of detection signatures on this service (once per service).
+        for h in hits_by_service.remove(&r.service_id).unwrap_or_default() {
+            let title = match (&h.version, &h.technology) {
+                (Some(v), _) => format!("{} {v}", h.name),
+                _ => h.name.clone(),
+            };
+            let evidence: Vec<Value> = h
+                .evidence
+                .iter()
+                .map(|e| json!({ "type": "header", "label": "Dopasowanie sygnatury", "snippet": e, "highlight": null }))
+                .chain(h.url.iter().map(|u| json!({ "type": "path", "label": "Adres", "snippet": u, "highlight": null })))
+                .collect();
+            candidates.push((
+                finding_category(&h.category),
+                format!("sig:{}:{service_key}", h.signature_id),
+                title,
+                (30 + h.score_weight).min(80),
+                evidence,
+                Some((h.signature_id, h.name.clone())),
+            ));
+        }
+        for (category, entity_key, title, base, evidence, signature) in candidates {
             let id = finding_id(r.scan_id, category, &entity_key);
             if !seen.insert(id) {
                 continue;
             }
-            let entity_kind = if category == "exposure" { "service" } else { "http" };
+            let entity_kind = if category == "exposure" || signature.is_some() { "service" } else { "http" };
             let change = base_change
                 .clone()
                 .or_else(|| changes.get(&(r.run_id, entity_kind.to_string(), entity_key.clone())).cloned())
@@ -1296,13 +1352,13 @@ async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Finding>> {
                 confidence: r.confidence,
                 measurements: json!({ "responded": responded, "total": total }),
                 evidence,
-                signature_id: None,
-                signature_name: None,
+                signature_id: signature.as_ref().map(|s| s.0.to_string()),
+                signature_name: signature.map(|s| s.1),
                 assignee: st.and_then(|s| s.assignee.clone()),
                 tags: st.map(|s| s.tags.clone()).unwrap_or_default(),
                 notes: st.and_then(|s| s.notes.clone()),
                 manual_overrides: json!({}),
-                defectdojo: None,
+                defectdojo: st.and_then(|s| s.defectdojo.clone()),
                 first_seen: r.first_seen_at,
                 last_seen: r.seen_at,
                 scan_id: r.scan_id,
@@ -1502,16 +1558,6 @@ pub async fn export_findings(State(s): State<AppState>, Query(q): Query<Findings
     }
     let body = w.into_inner().map_err(fail)?;
     Ok(file("text/csv; charset=utf-8", &format!("asi-findings-{stamp}.csv"), body, note("csv")))
-}
-
-/// `POST /api/v1/findings/defectdojo` — not implemented yet (raw outputs are kept in
-/// `run_artifacts` for it); says so instead of pretending.
-pub async fn defectdojo_export() -> ApiError {
-    err(
-        StatusCode::NOT_IMPLEMENTED,
-        "not_implemented",
-        "Eksport do DefectDojo nie jest jeszcze dostępny w tej wersji.",
-    )
 }
 
 // ---------- dashboard ----------

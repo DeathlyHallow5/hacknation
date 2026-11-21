@@ -44,6 +44,72 @@ pub struct ScanConfig {
     pub ports: String,
     pub batch_size: i32,
     pub preflight: bool,
+    /// Clock window (local `HH:MM[:SS]` in `timezone`); absent in snapshots taken before 0009.
+    #[serde(default)]
+    pub window_start: Option<String>,
+    #[serde(default)]
+    pub window_end: Option<String>,
+    #[serde(default)]
+    pub timezone: Option<String>,
+    /// ISO weekdays the clock window opens on; empty = every day.
+    #[serde(default)]
+    pub schedule_days: Vec<i32>,
+    /// Demo: the window closes after N seconds and reopens N seconds later.
+    #[serde(default)]
+    pub test_window_seconds: Option<i32>,
+    /// `pause_resume` (default) or `stop` when the window closes.
+    #[serde(default)]
+    pub on_window_exceeded: Option<String>,
+}
+
+impl ScanConfig {
+    fn clock_window(&self) -> Option<(&str, &str, &str)> {
+        match (&self.window_start, &self.window_end) {
+            (Some(s), Some(e)) => Some((s, e, self.timezone.as_deref().unwrap_or("Europe/Warsaw"))),
+            _ => None,
+        }
+    }
+}
+
+/// End of the current window: test window, clock window (containing `start`) or duration.
+/// A run started outside its clock window ("start now") has no deadline.
+async fn window_deadline(db: &sqlx::PgPool, scan: &ScanConfig, start: DateTime<Utc>) -> sqlx::Result<Option<DateTime<Utc>>> {
+    if let Some(secs) = scan.test_window_seconds {
+        return Ok(Some(start + ChronoDuration::seconds(secs as i64)));
+    }
+    if let Some((ws, we, tz)) = scan.clock_window() {
+        let close: Option<DateTime<Utc>> =
+            sqlx::query_scalar("SELECT asi_window_close($1::time, $2::time, $3, $4::int[], $5)")
+                .bind(ws)
+                .bind(we)
+                .bind(tz)
+                .bind(&scan.schedule_days)
+                .bind(start)
+                .fetch_one(db)
+                .await?;
+        return Ok(close);
+    }
+    Ok(scan.window_minutes.map(|m| start + ChronoDuration::minutes(m as i64)))
+}
+
+/// When a paused run continues: the next window opening.
+async fn next_window(db: &sqlx::PgPool, scan: &ScanConfig, window_start: DateTime<Utc>) -> sqlx::Result<DateTime<Utc>> {
+    if let Some(secs) = scan.test_window_seconds {
+        return Ok(Utc::now() + ChronoDuration::seconds(secs as i64));
+    }
+    if let Some((ws, _, tz)) = scan.clock_window() {
+        let next: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT asi_next_window_open($1::time, $2, $3::int[], now())")
+            .bind(ws)
+            .bind(tz)
+            .bind(&scan.schedule_days)
+            .fetch_one(db)
+            .await?;
+        if let Some(n) = next {
+            return Ok(n);
+        }
+    }
+    let period = scan.repeat_every_minutes.map(i64::from).unwrap_or(DEFAULT_WINDOW_PERIOD_MIN);
+    Ok(window_start + ChronoDuration::minutes(period))
 }
 
 /// Aim for batches of this duration (or half the remaining window, if shorter).
@@ -148,6 +214,8 @@ pub fn valid_ports(spec: &str) -> bool {
 enum Outcome {
     Done,
     Paused,
+    /// Paused by a user (`POST /api/v1/scans/{id}/pause`); resumes only on request.
+    ManualPause,
     Cancelled,
 }
 
@@ -164,7 +232,9 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
                  WHERE st.scan_id = r.scan_id AND NOT t.excluded)),
              config_snapshot = COALESCE(r.config_snapshot, (
                  SELECT to_jsonb(c) FROM (SELECT inactive_after_misses, rate_limit_pps, window_minutes,
-                     repeat_every_minutes, ports, batch_size, preflight FROM scans WHERE id = r.scan_id) c))
+                     repeat_every_minutes, ports, batch_size, preflight, window_start::text AS window_start,
+                     window_end::text AS window_end, timezone, schedule_days, test_window_seconds,
+                     on_window_exceeded FROM scans WHERE id = r.scan_id) c))
          WHERE r.id = $1",
     )
     .bind(run_id)
@@ -192,14 +262,22 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
     let mut retrying: Option<u128> = None;
 
     let window_start = run.window_started_at.unwrap_or_else(Utc::now);
-    let deadline = scan.window_minutes.map(|m| window_start + ChronoDuration::minutes(m as i64));
+    let deadline = window_deadline(db, &scan, window_start).await?;
     tracing::info!(%run_id, total, from = %offset, size, "run started");
 
     let mut outcome = Outcome::Done;
     while offset < total {
-        if is_cancelled(db, run_id).await? {
-            outcome = Outcome::Cancelled;
-            break;
+        match run_status(db, run_id).await?.as_str() {
+            "cancelled" => {
+                outcome = Outcome::Cancelled;
+                break;
+            }
+            // Paused from the dashboard: stop after the last finished batch.
+            "paused" => {
+                outcome = Outcome::ManualPause;
+                break;
+            }
+            _ => {}
         }
         let budget = match deadline {
             Some(d) if Utc::now() >= d => {
@@ -272,6 +350,10 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
     let finished = match outcome {
         Outcome::Done => {
             crate::history::finalize(&state, &scan, run_id, &targets, &mut stats, deadline).await;
+            // Detection signatures on what this run collected (no extra network traffic).
+            if let Err(e) = crate::signatures::evaluate_run(db, &state.config.data_key, run_id).await {
+                stats.error(format!("signature evaluation failed: {e}"));
+            }
             // Some inputs were not covered: the run is usable, but only as 'partial'.
             let status = if stats.hosts_failed > 0 { "partial" } else { "done" };
             let n = sqlx::query(
@@ -287,10 +369,29 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
             tracing::info!(%run_id, status, "run finished");
             n > 0
         }
+        Outcome::Paused if scan.on_window_exceeded.as_deref() == Some("stop") => {
+            // The scan is configured to stop at the window's end: what is not scanned stays
+            // uncovered, so the run is closed as cancelled (no diff on partial coverage).
+            stats.error("window closed: stopped (on_window_exceeded = stop)".into());
+            sqlx::query("UPDATE scan_runs SET status = 'cancelled', error = $2 WHERE id = $1 AND status = 'running'")
+                .bind(run_id)
+                .bind("Okno skanowania zamknięte — przebieg zatrzymany (tryb „stop”).")
+                .execute(db)
+                .await?;
+            false
+        }
+        Outcome::ManualPause => {
+            sqlx::query("UPDATE scan_runs SET stats = $2 WHERE id = $1 AND status = 'paused'")
+                .bind(run_id)
+                .bind(sqlx::types::Json(&stats))
+                .execute(db)
+                .await?;
+            tracing::info!(%run_id, "run paused by a user");
+            true
+        }
         Outcome::Paused => {
             stats.pauses += 1;
-            let period = scan.repeat_every_minutes.map(i64::from).unwrap_or(DEFAULT_WINDOW_PERIOD_MIN);
-            let resume_at = window_start + ChronoDuration::minutes(period);
+            let resume_at = next_window(db, &scan, window_start).await?;
             let n = sqlx::query("UPDATE scan_runs SET status = 'paused', resume_at = $2, stats = $3 WHERE id = $1 AND status = 'running'")
                 .bind(run_id)
                 .bind(resume_at)
@@ -316,6 +417,10 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
         tracing::info!(%run_id, "run cancelled");
     }
     Ok(())
+}
+
+pub(crate) async fn run_status(db: &sqlx::PgPool, run_id: Uuid) -> sqlx::Result<String> {
+    sqlx::query_scalar("SELECT status::text FROM scan_runs WHERE id = $1").bind(run_id).fetch_one(db).await
 }
 
 pub(crate) async fn is_cancelled(db: &sqlx::PgPool, run_id: Uuid) -> sqlx::Result<bool> {
