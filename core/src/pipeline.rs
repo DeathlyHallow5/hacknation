@@ -112,6 +112,44 @@ async fn next_window(db: &sqlx::PgPool, scan: &ScanConfig, window_start: DateTim
     Ok(window_start + ChronoDuration::minutes(period))
 }
 
+/// User-Agent of HTTP requests when settings have none.
+pub(crate) const DEFAULT_USER_AGENT: &str = "ASI/0.1 (Attack Surface Intelligence; authorised scan)";
+
+/// nmap service names that can carry HTTP (or that nmap could not identify).
+fn may_speak_http(name: Option<&str>) -> bool {
+    match name {
+        None => true,
+        Some(n) => {
+            let n = n.to_ascii_lowercase();
+            n.contains("http") || n.contains("www") || matches!(n.as_str(), "ssl" | "tls" | "unknown" | "tcpwrapped" | "")
+        }
+    }
+}
+
+/// Hosts grouped by their set of open ports → (nmap port list, hosts). At most 32 groups:
+/// the rest share one group with the union of their ports (bounded extra probing).
+fn port_groups(open: &BTreeMap<String, parse::HostPorts>) -> Vec<(String, Vec<String>)> {
+    let mut by_set: BTreeMap<BTreeSet<u16>, Vec<String>> = BTreeMap::new();
+    for (ip, hp) in open {
+        let set: BTreeSet<u16> = hp.ports.iter().copied().collect();
+        if !set.is_empty() {
+            by_set.entry(set).or_default().push(ip.clone());
+        }
+    }
+    let mut groups: Vec<(BTreeSet<u16>, Vec<String>)> = by_set.into_iter().collect();
+    groups.sort_by_key(|g| std::cmp::Reverse(g.1.len()));
+    if groups.len() > 32 {
+        let rest = groups.split_off(31);
+        let ports = rest.iter().flat_map(|g| g.0.iter().copied()).collect();
+        let hosts = rest.into_iter().flat_map(|g| g.1).collect();
+        groups.push((ports, hosts));
+    }
+    groups
+        .into_iter()
+        .map(|(ports, hosts)| (ports.iter().map(u16::to_string).collect::<Vec<_>>().join(","), hosts))
+        .collect()
+}
+
 /// Aim for batches of this duration (or half the remaining window, if shorter).
 const TARGET_BATCH_SECS: f64 = 120.0;
 
@@ -467,6 +505,14 @@ pub(crate) async fn run_batch(
     let deadline = tokio::time::Instant::now() + budget;
     let left = || deadline.saturating_duration_since(tokio::time::Instant::now());
     let mut stats = BatchStats::default();
+    // Identify ourselves honestly to the web servers we fingerprint (settings → user_agent).
+    let user_agent: String = sqlx::query_scalar("SELECT value #>> '{scan_safety,user_agent}' FROM settings WHERE key = 'system'")
+        .fetch_optional(&state.db)
+        .await?
+        .flatten()
+        .filter(|ua: &String| !ua.trim().is_empty() && !ua.contains(['\r', '\n']))
+        .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string());
+    let ua_header = format!("User-Agent: {user_agent}");
 
     // 1) Pre-flight: hosts that are up even with no scanned port open. It does not filter
     //    the inputs of step 2 (F-06): "no answer to probes" is not "no services".
@@ -486,7 +532,9 @@ pub(crate) async fn run_batch(
 
     // 2) Open ports on every input (CONNECT scan: works without raw-socket capabilities).
     let list = ListFile::new(run_id, index, "ports", inputs.to_vec()).await?;
-    let mut naabu_args = vec!["-l", list.arg(), "-s", "c", "-Pn", "-rate", &rate, "-c", &threads, "-retries", "1", "-json", "-silent"];
+    // -duc: no update check — the scanner never talks to anything but the targets.
+    let mut naabu_args =
+        vec!["-l", list.arg(), "-s", "c", "-Pn", "-rate", &rate, "-c", &threads, "-retries", "1", "-json", "-silent", "-duc"];
     match scan.ports.as_str() {
         preset @ ("100" | "1000" | "full") => naabu_args.extend(["-top-ports", preset]),
         list => naabu_args.extend(["-p", list]),
@@ -503,16 +551,21 @@ pub(crate) async fn run_batch(
     stats.alive = alive.len() as u64;
     stats.open_ports = open.values().map(|h| h.ports.len() as u64).sum();
 
-    // 3) Service/version detection only where something is open.
+    // 3) Service/version detection only on the ports found open on each host: hosts are
+    //    grouped by their open-port set, so no host is probed on its neighbours' ports.
+    //    --version-light: the common probes only (no RTSP/SIP/... on every unknown port).
     let mut services: BTreeMap<(String, u16), parse::NmapService> = BTreeMap::new();
-    if !open.is_empty() {
-        let union: BTreeSet<u16> = open.values().flat_map(|h| h.ports.iter().copied()).collect();
-        let ports = union.iter().map(u16::to_string).collect::<Vec<_>>().join(",");
-        let list = ListFile::new(run_id, index, "sv", open.keys().cloned().collect()).await?;
+    let mut sv_failed = false;
+    let mut nmap_xml = Vec::new();
+    for (ports, hosts) in port_groups(&open) {
+        let list = ListFile::new(run_id, index, &format!("sv{}", nmap_xml.len()), hosts).await?;
         match engine::run(
             tools,
             Tool::Nmap,
-            &["-sT", "-sV", "-Pn", "-n", "--max-rate", &rate, "--host-timeout", "90s", "-p", &ports, "-oX", "-", "-iL", list.arg()],
+            &[
+                "-sT", "-sV", "--version-light", "-Pn", "-n", "--max-rate", &rate, "--host-timeout", "90s", "-p", &ports,
+                "-oX", "-", "-iL", list.arg(),
+            ],
             left(),
         )
         .await
@@ -521,28 +574,46 @@ pub(crate) async fn run_batch(
                 for s in parse::nmap_services(&xml)? {
                     services.insert((s.ip.clone(), s.port), s);
                 }
-                artifacts.push(("nmap", xml));
+                nmap_xml.push(xml);
             }
             // Out of time: abort the batch so it is redone whole, not stored half-scanned.
             Err(e) if left().is_zero() => return Err(e.context("window closed during nmap -sV")),
             // Keep the ports even if version detection fails; confidence stays low.
-            Err(e) => tracing::warn!(%run_id, index, "nmap -sV failed: {e:#}"),
+            Err(e) => {
+                sv_failed = true;
+                tracing::warn!(%run_id, index, "nmap -sV failed: {e:#}");
+            }
         }
     }
+    if !nmap_xml.is_empty() {
+        artifacts.push(("nmap", nmap_xml.join("\n")));
+    }
 
-    // 4) HTTP/HTTPS fingerprint on every open port (non-HTTP ports simply fail).
+    // 4) HTTP/HTTPS fingerprint only where a web server can be: ports nmap identified as
+    //    HTTP/TLS or could not identify. No HTTP requests to SSH, AMQP, databases... (they
+    //    log them as protocol errors). If version detection failed, every open port.
     let mut http = Vec::new();
     if !open.is_empty() {
-        let endpoints = open.iter().flat_map(|(ip, hp)| {
+        let endpoints: Vec<String> = open.iter().flat_map(|(ip, hp)| {
             let name = hp.hostname.clone().or_else(|| alive.get(ip).cloned().flatten()).unwrap_or_else(|| ip.clone());
-            hp.ports.iter().map(move |p| format!("{name}:{p}"))
+            let services = &services;
+            hp.ports
+                .iter()
+                .filter(move |p| {
+                    // A name guessed from the port table only (nmap conf 3 → 0.3) is not an
+                    // identification: such ports still get the HTTP probe.
+                    let svc = services.get(&(ip.clone(), **p)).filter(|s| s.confidence >= 0.5);
+                    sv_failed || may_speak_http(svc.and_then(|s| s.name.as_deref()))
+                })
+                .map(move |p| format!("{name}:{p}"))
         }).collect();
         let list = ListFile::new(run_id, index, "http", endpoints).await?;
         match engine::run(
             tools,
             Tool::Httpx,
             &[
-                "-l", list.arg(), "-json", "-silent", "-nc", "-sc", "-title", "-server", "-td", "-favicon",
+                "-l", list.arg(), "-json", "-silent", "-nc", "-sc", "-title", "-server", "-td", "-favicon", "-duc",
+                "-random-agent=false", "-H", &ua_header,
                 // No -fr: redirects are recorded (-location), never followed, so a 30x cannot
                 // lead the scanner outside the approved targets (F-03).
                 "-irh", "-tls-grab", "-location", "-ip",
@@ -665,7 +736,38 @@ pub(crate) async fn run_batch(
 
 #[cfg(test)]
 mod tests {
-    use super::{next_batch_size, valid_ports};
+    #[test]
+    fn only_web_capable_ports_go_to_httpx() {
+        for yes in [None, Some("http"), Some("https"), Some("http-proxy"), Some("ssl/http"), Some("ssl"), Some("unknown"), Some("tcpwrapped")] {
+            assert!(may_speak_http(yes), "{yes:?}");
+        }
+        for no in [Some("ssh"), Some("amqp"), Some("postgresql"), Some("mysql"), Some("ftp"), Some("smtp"), Some("redis")] {
+            assert!(!may_speak_http(no), "{no:?}");
+        }
+    }
+
+    #[test]
+    fn hosts_are_probed_only_on_their_own_ports() {
+        let hp = |ports: &[u16]| parse::HostPorts { hostname: None, ports: ports.iter().copied().collect() };
+        let open: BTreeMap<String, parse::HostPorts> = [
+            ("10.0.0.1".to_string(), hp(&[22, 80])),
+            ("10.0.0.2".to_string(), hp(&[80, 22])),
+            ("10.0.0.3".to_string(), hp(&[443])),
+        ]
+        .into_iter()
+        .collect();
+        let g = port_groups(&open);
+        assert_eq!(g.len(), 2);
+        assert!(g.contains(&("22,80".to_string(), vec!["10.0.0.1".to_string(), "10.0.0.2".to_string()])));
+        assert!(g.contains(&("443".to_string(), vec!["10.0.0.3".to_string()])));
+        let many: BTreeMap<String, parse::HostPorts> = (1..=40u16).map(|i| (format!("10.0.1.{i}"), hp(&[1000 + i]))).collect();
+        let g = port_groups(&many);
+        assert_eq!(g.len(), 32, "bounded number of nmap runs");
+        assert_eq!(g.iter().map(|x| x.1.len()).sum::<usize>(), 40, "every host still covered");
+    }
+
+    use super::{may_speak_http, next_batch_size, parse, port_groups, valid_ports};
+    use std::collections::BTreeMap;
     use chrono::{Duration, Utc};
 
     #[test]
