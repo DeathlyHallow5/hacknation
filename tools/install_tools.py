@@ -12,6 +12,8 @@ import json
 import os
 import platform
 from pathlib import Path
+import time
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -19,10 +21,23 @@ ROOT = Path(__file__).resolve().parents[1]
 VERSIONS = json.loads((ROOT / "tools/versions.json").read_text(encoding="utf-8-sig"))
 
 
-def fetch(url: str) -> bytes:
+def fetch(url: str, attempts: int = 8) -> bytes:
+    """Download with retries for ~2 minutes: Docker Desktop's DNS can drop out for a while
+    during builds (seen on Windows/WSL2)."""
     request = urllib.request.Request(url, headers={"User-Agent": "SWOT-tool-installer/2.1"})
-    with urllib.request.urlopen(request, timeout=180) as response:
-        return response.read()
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                return response.read()
+        except urllib.error.HTTPError as e:
+            if e.code < 500 or attempt == attempts:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == attempts:
+                raise
+        print(f"retrying {url.rsplit('/', 1)[-1]} ({attempt}/{attempts - 1})", flush=True)
+        time.sleep(min(5 * attempt, 20))
+    raise AssertionError("unreachable")
 
 
 def install(name: str, dest: Path, system: str, arch: str) -> None:

@@ -124,6 +124,32 @@ pub const ROUTES: &[(&str, &str, Rule)] = &[
     ("PATCH", "/api/users/{id}", Requires(ManageUsers)),
     ("DELETE", "/api/users/{id}", Requires(ManageUsers)),
     ("GET", "/api/audit", Requires(ReadAudit)),
+    // Dashboard contract (/api/v1, v1.rs).
+    ("POST", "/api/v1/auth/login", Public),
+    ("POST", "/api/v1/auth/logout", Authenticated),
+    ("GET", "/api/v1/auth/me", Authenticated),
+    ("GET", "/api/v1/dashboard/summary", Requires(Read)),
+    ("GET", "/api/v1/dashboard/top-findings", Requires(Read)),
+    ("GET", "/api/v1/dashboard/changes-timeline", Requires(Read)),
+    ("GET", "/api/v1/dashboard/availability", Requires(Read)),
+    ("GET", "/api/v1/dashboard/technologies", Requires(Read)),
+    ("GET", "/api/v1/dashboard/address-map", Requires(Read)),
+    ("GET", "/api/v1/search", Requires(Read)),
+    ("GET", "/api/v1/targets", Requires(Read)),
+    ("POST", "/api/v1/targets", Requires(Create)),
+    ("GET", "/api/v1/targets/export", Requires(Read)),
+    ("POST", "/api/v1/targets/import", Requires(Create)),
+    ("POST", "/api/v1/targets/bulk", Requires(Update)),
+    ("GET", "/api/v1/targets/{id}", Requires(Read)),
+    ("PATCH", "/api/v1/targets/{id}", Requires(Update)),
+    ("DELETE", "/api/v1/targets/{id}", Requires(Delete)),
+    ("GET", "/api/v1/scans", Requires(Read)),
+    ("GET", "/api/v1/findings", Requires(Read)),
+    ("GET", "/api/v1/findings/export", Requires(Read)),
+    ("POST", "/api/v1/findings/defectdojo", Requires(ManageIntegrations)),
+    ("GET", "/api/v1/findings/{id}", Requires(Read)),
+    ("PATCH", "/api/v1/findings/{id}", Requires(Update)),
+    ("GET", "/api/v1/audit", Requires(ReadAudit)),
 ];
 
 /// Rule of a matched route; `None` = not in the table (admin-only fallback).
@@ -176,7 +202,7 @@ mod tests {
     #[test]
     fn route_table() {
         let public: Vec<_> = ROUTES.iter().filter(|r| r.2 == Public).map(|r| (r.0, r.1)).collect();
-        assert_eq!(public, [("GET", "/api/health"), ("POST", "/api/auth/login")]);
+        assert_eq!(public, [("GET", "/api/health"), ("POST", "/api/auth/login"), ("POST", "/api/v1/auth/login")]);
         for (i, (m, p, _)) in ROUTES.iter().enumerate() {
             assert!(["GET", "POST", "PUT", "PATCH", "DELETE"].contains(m), "{m} {p}");
             assert!(p.starts_with("/api/"), "{p}");

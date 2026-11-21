@@ -160,7 +160,8 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
         "UPDATE scan_runs r SET
              target_snapshot = COALESCE(r.target_snapshot, (
                  SELECT COALESCE(jsonb_agg(jsonb_build_object('kind', t.kind, 'value', t.value) ORDER BY t.value), '[]'::jsonb)
-                 FROM scan_targets st JOIN targets t ON t.id = st.target_id WHERE st.scan_id = r.scan_id)),
+                 FROM scan_targets st JOIN targets t ON t.id = st.target_id
+                 WHERE st.scan_id = r.scan_id AND NOT t.excluded)),
              config_snapshot = COALESCE(r.config_snapshot, (
                  SELECT to_jsonb(c) FROM (SELECT inactive_after_misses, rate_limit_pps, window_minutes,
                      repeat_every_minutes, ports, batch_size, preflight FROM scans WHERE id = r.scan_id) c))
