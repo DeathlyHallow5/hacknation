@@ -318,7 +318,7 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
     Ok(())
 }
 
-async fn is_cancelled(db: &sqlx::PgPool, run_id: Uuid) -> sqlx::Result<bool> {
+pub(crate) async fn is_cancelled(db: &sqlx::PgPool, run_id: Uuid) -> sqlx::Result<bool> {
     sqlx::query_scalar("SELECT status = 'cancelled' FROM scan_runs WHERE id = $1")
         .bind(run_id)
         .fetch_one(db)

@@ -395,6 +395,9 @@ async fn finalize_inner(
     if !inputs.is_empty() && time_left.is_none_or(|t| t > RECHECK_DELAY * 3) {
         tracing::info!(%run_id, n = inputs.len(), "re-checking missing hosts/ports");
         tokio::time::sleep(RECHECK_DELAY).await;
+        if pipeline::is_cancelled(db, run_id).await? {
+            return Ok(());
+        }
         let budget = time_left.map(|t| t.saturating_sub(RECHECK_DELAY)).unwrap_or(pipeline::MAX_TOOL_TIME);
         stats.rechecked += inputs.len() as u64;
         if let Err(e) = pipeline::run_batch(state, scan, run_id, stats.batches_done as usize, &inputs, budget).await {
@@ -403,6 +406,9 @@ async fn finalize_inner(
     }
 
     // 2) Carry missing hosts forward; count flaps of hosts that came back.
+    if pipeline::is_cancelled(db, run_id).await? {
+        return Ok(());
+    }
     let cur = load(db, run_id, key).await?;
     let missing: Vec<String> = prev
         .snapshot
