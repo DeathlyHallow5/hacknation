@@ -38,7 +38,10 @@ function KpiCard({ title, topBar, children, className }: { title: string; topBar
 
 function WindowCard({ s }: { s: DashboardSummary }) {
   const running = s.running_scan;
-  const windowLen = 8 * 3600;
+  const [sh, sm] = s.window.start.split(":").map(Number);
+  const [eh, em] = s.window.end.split(":").map(Number);
+  const windowMin = (eh * 60 + em - (sh * 60 + sm) + 24 * 60) % (24 * 60) || 24 * 60;
+  const windowLen = windowMin * 60;
   const lastUse = s.last_scan ? Math.min(1, s.last_scan.duration_s / windowLen) : 0;
   return (
     <KpiCard
@@ -52,7 +55,7 @@ function WindowCard({ s }: { s: DashboardSummary }) {
             <span className="text-sm text-chrome-ink-2">skanu #{running.number}</span>
           </p>
           <Progress value={running.progress} className="h-2 bg-chrome-line" label="Postęp skanowania" />
-          <dl className="grid grid-cols-2 gap-2 text-[0.8125rem]">
+          <dl className="grid grid-cols-2 gap-2 text-sm">
             <div>
               <dt className="text-chrome-ink-2">Tempo</dt>
               <dd className="tabular font-semibold">{fmtNumber(running.rate_rps)} zapytań/s</dd>
@@ -68,10 +71,10 @@ function WindowCard({ s }: { s: DashboardSummary }) {
       ) : (
         <div className="grid gap-3">
           <p className="flex items-baseline gap-2">
-            <span className="tabular text-[2.5rem] leading-none font-extrabold">{fmtPercent(lastUse)}</span>
+            <span className="tabular text-[2.5rem] leading-none font-extrabold">{lastUse > 0 && lastUse < 0.01 ? "<1%" : fmtPercent(lastUse)}</span>
             <span className="text-sm text-chrome-ink-2">okna wykorzystał ostatni przebieg</span>
           </p>
-          <dl className="grid grid-cols-2 gap-2 text-[0.8125rem]">
+          <dl className="grid grid-cols-2 gap-2 text-sm">
             <div>
               <dt className="text-chrome-ink-2">Czas skanu #{s.last_scan?.number}</dt>
               <dd className="font-semibold">{fmtDuration(s.last_scan?.duration_s)}</dd>
@@ -81,7 +84,7 @@ function WindowCard({ s }: { s: DashboardSummary }) {
               <dd className="tabular font-semibold">{fmtNumber(s.rate_limit_rps)} zapytań/s</dd>
             </div>
           </dl>
-          <p className="text-[0.8125rem] text-chrome-ink-2">
+          <p className="text-sm text-chrome-ink-2">
             {s.window_open ? "Okno jest teraz otwarte." : `Następne okno: ${fmtSmart(s.next_window_at)} (${fmtRelative(s.next_window_at)}).`}
           </p>
         </div>
@@ -161,7 +164,7 @@ function Hero({
                     {fmtSigned(s.active_hosts_delta)}
                   </span>
                 </p>
-                <p className="text-[0.8125rem] text-chrome-ink-2">
+                <p className="text-sm text-chrome-ink-2">
                   od skanu #{s.changes_base_scan}; {fmtNumber(s.services_count)} usług, w tym {fmtNumber(s.web_services_count)} WWW
                 </p>
                 <div className="mt-auto">
@@ -187,7 +190,7 @@ function Hero({
                     </li>
                   ))}
                 </ul>
-                <Link href="/changes" className="mt-auto inline-flex items-center gap-1 text-[0.8125rem] font-semibold text-accent hover:underline">
+                <Link href="/changes" className="mt-auto inline-flex items-center gap-1 text-sm font-semibold text-accent hover:underline">
                   Porównanie #{s.changes_base_scan} → #{s.changes_head_scan} <ArrowRight className="size-3.5" aria-hidden />
                 </Link>
               </KpiCard>
@@ -208,7 +211,7 @@ function Hero({
             <h2 className="text-sm font-semibold text-chrome-ink-2">Mapa przestrzeni adresowej</h2>
             <SimpleSelect
               aria-label="Zakres na mapie"
-              className="h-8 w-56 border-chrome-line bg-chrome-raised text-[0.8125rem] text-chrome-ink"
+              className="h-8 w-56 border-chrome-line bg-chrome-raised text-sm text-chrome-ink"
               value={mapCidr}
               onChange={(v) => setMapCidr(v || ranges[0].cidr)}
               options={ranges.map((r) => ({ value: r.cidr, label: `${r.cidr} ${r.label}` }))}
@@ -285,7 +288,7 @@ export function DashboardView() {
             id="top-findings"
             title="Najważniejsze znaleziska"
             description="Dziesięć obserwacji o najwyższym priorytecie analitycznym. Kliknij wiersz, aby zobaczyć dowody i ocenić znalezisko."
-            bodyClassName="p-0"
+            flush
             actions={
               <>
                 <Button asChild variant="ghost" size="sm">
@@ -366,12 +369,12 @@ export function DashboardView() {
                   </Link>
                 </Button>
               }
-              bodyClassName="p-0"
+              flush
             >
               <ul className="divide-y divide-line">
                 {(activity.data?.items ?? []).map((e) => (
                   <li key={e.id} className="grid grid-cols-[auto_1fr_auto] items-start gap-3 px-5 py-3 text-sm">
-                    <span className="mt-0.5 grid size-7 place-items-center rounded-full bg-surface-3 text-[0.6875rem] font-extrabold text-ink-2">
+                    <span className="mt-0.5 grid size-7 place-items-center rounded-full bg-surface-3 text-xs font-extrabold text-ink-2">
                       {e.actor.name === "Harmonogram" || e.actor.name === "System" ? <Radar className="size-3.5" aria-hidden /> : e.actor.name.split(" ").map((p) => p[0]).join("").slice(0, 2)}
                     </span>
                     <span className="grid gap-0.5">
@@ -396,7 +399,7 @@ export function DashboardView() {
               </ul>
             </Panel>
           ) : can("scans:read") ? (
-            <Panel title="Ostatnie skanowania" bodyClassName="p-0">
+            <Panel title="Ostatnie skanowania" flush>
               <ul className="divide-y divide-line">
                 {(recentScans.data?.items ?? []).map((sc) => (
                   <li key={sc.id}>

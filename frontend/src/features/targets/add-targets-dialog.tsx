@@ -20,6 +20,17 @@ import { useQueryClient } from "@tanstack/react-query";
 const EXAMPLE = "10.0.32.0/22\nportal.wydzial.uczelnia.example\n10.0.40.66\n300.1.1.1";
 
 export function AddTargetsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="xl">
+        <AddTargetsForm onOpenChange={onOpenChange} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Inside DialogContent: unmounted on close, so every opening starts empty. */
+function AddTargetsForm({ onOpenChange }: { onOpenChange: (o: boolean) => void }) {
   const qc = useQueryClient();
   const [text, setText] = React.useState("");
   const [name, setName] = React.useState("");
@@ -40,16 +51,6 @@ export function AddTargetsDialog({ open, onOpenChange }: { open: boolean; onOpen
   const invalid = rows.filter((r) => !r.ok);
   const addresses = valid.reduce((n, r) => n + (r.address_count ?? 0), 0);
 
-  React.useEffect(() => {
-    if (!open) {
-      setText("");
-      setName("");
-      setOwner("");
-      setTags([]);
-      setCriticality("medium");
-    }
-  }, [open]);
-
   const submit = async () => {
     setPending(true);
     try {
@@ -69,8 +70,7 @@ export function AddTargetsDialog({ open, onOpenChange }: { open: boolean; onOpen
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="xl">
+    <>
         <DialogHeader>
           <DialogTitle>Dodaj cele ręcznie</DialogTitle>
           <DialogDescription>
@@ -79,12 +79,12 @@ export function AddTargetsDialog({ open, onOpenChange }: { open: boolean; onOpen
         </DialogHeader>
         <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
           <div className="grid content-start gap-4">
-            <Field label="Cele" htmlFor="targets-text" aside={<button type="button" className="text-[0.8125rem] font-semibold text-link hover:underline" onClick={() => setText(EXAMPLE)}>Wstaw przykład</button>}>
+            <Field label="Cele" htmlFor="targets-text" aside={<button type="button" className="text-sm font-semibold text-link hover:underline" onClick={() => setText(EXAMPLE)}>Wstaw przykład</button>}>
               <Textarea
                 id="targets-text"
                 value={text}
                 onChange={(e) => setText(e.target.value)}
-                className="mono min-h-48 text-[0.8125rem]"
+                className="mono min-h-48 text-sm"
                 placeholder={"10.0.0.0/24\n10.0.5.17\nportal.uczelnia.example"}
                 spellCheck={false}
               />
@@ -112,7 +112,7 @@ export function AddTargetsDialog({ open, onOpenChange }: { open: boolean; onOpen
           <div className="grid content-start gap-3">
             <div className="flex items-center justify-between">
               <span className="text-sm font-bold">Podgląd ({entries.length})</span>
-              <span className="text-[0.8125rem] text-ink-2">
+              <span className="text-sm text-ink-2">
                 {valid.length} poprawnych, {invalid.length} błędnych, {fmtNumber(addresses)} adresów
               </span>
             </div>
@@ -152,7 +152,6 @@ export function AddTargetsDialog({ open, onOpenChange }: { open: boolean; onOpen
             Dodaj {valid.length ? countLabel(valid.length, ["cel", "cele", "celów"]) : "cele"}
           </Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </>
   );
 }

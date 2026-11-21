@@ -66,7 +66,7 @@ function CriticalityCell({ t }: { t: Target }) {
     <div onClick={(e) => e.stopPropagation()}>
       <SimpleSelect
         aria-label={`Krytyczność ${t.value}`}
-        className="h-8 w-32 text-[0.8125rem]"
+        className="h-8 w-32 text-sm"
         value={t.criticality}
         options={CRIT_OPTIONS}
         onChange={async (v) => {
@@ -87,32 +87,34 @@ function CriticalityCell({ t }: { t: Target }) {
 }
 
 function EditTargetSheet({ target, onClose }: { target: Target | null; onClose: () => void }) {
-  const [name, setName] = React.useState("");
-  const [owner, setOwner] = React.useState("");
-  const [criticality, setCriticality] = React.useState<Criticality>("medium");
-  const [tags, setTags] = React.useState<string[]>([]);
-  const [notes, setNotes] = React.useState("");
-  const [excluded, setExcluded] = React.useState(false);
-  React.useEffect(() => {
-    if (!target) return;
-    setName(target.name ?? "");
-    setOwner(target.owner ?? "");
-    setCriticality(target.criticality);
-    setTags(target.tags);
-    setNotes(target.notes ?? "");
-    setExcluded(target.excluded);
-  }, [target]);
+  // Keep the last target so the panel keeps its content during the closing animation.
+  const [last, setLast] = React.useState(target);
+  if (target && target !== last) setLast(target);
+  return (
+    <Sheet open={Boolean(target)} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent>{last ? <EditTargetForm target={last} onClose={onClose} /> : null}</SheetContent>
+    </Sheet>
+  );
+}
+
+/** Lives inside SheetContent, so its state starts fresh each time the panel opens. */
+function EditTargetForm({ target, onClose }: { target: Target; onClose: () => void }) {
+  const [name, setName] = React.useState(target.name ?? "");
+  const [owner, setOwner] = React.useState(target.owner ?? "");
+  const [criticality, setCriticality] = React.useState<Criticality>(target.criticality);
+  const [tags, setTags] = React.useState<string[]>(target.tags);
+  const [notes, setNotes] = React.useState(target.notes ?? "");
+  const [excluded, setExcluded] = React.useState(target.excluded);
   const save = useApiMutation(
-    () => api.targets.update(target!.id, { name: name || null, owner: owner || null, criticality, tags, notes: notes || null, excluded }),
+    () => api.targets.update(target.id, { name: name || null, owner: owner || null, criticality, tags, notes: notes || null, excluded }),
     { success: "Zapisano zmiany celu", invalidate: [["targets"]], onSuccess: onClose },
   );
   return (
-    <Sheet open={Boolean(target)} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent>
+    <>
         <SheetHeader>
-          <SheetTitle className="mono">{target?.value}</SheetTitle>
+          <SheetTitle className="mono">{target.value}</SheetTitle>
           <SheetDescription>
-            {target ? `${TARGET_TYPE_LABEL[target.type]}, ${fmtNumber(target.address_count)} adresów. Ostatnia zmiana: ${target.updated_by ?? "—"}, ${fmtRelative(target.updated_at)}.` : ""}
+            {`${TARGET_TYPE_LABEL[target.type]}, ${fmtNumber(target.address_count)} adresów. Ostatnia zmiana: ${target.updated_by ?? "—"}, ${fmtRelative(target.updated_at)}.`}
           </SheetDescription>
         </SheetHeader>
         <SheetBody>
@@ -144,7 +146,7 @@ function EditTargetSheet({ target, onClose }: { target: Target | null; onClose: 
             <label className="flex items-start justify-between gap-4 rounded-lg border border-line p-3">
               <span className="grid gap-0.5">
                 <span className="text-sm font-semibold">Wyklucz ze skanowania</span>
-                <span className="text-[0.8125rem] text-ink-2">Skaner nigdy nie wyśle ruchu do tych adresów — np. systemy wrażliwe na skanowanie.</span>
+                <span className="text-sm text-ink-2">Skaner nigdy nie wyśle ruchu do tych adresów — np. systemy wrażliwe na skanowanie.</span>
               </span>
               <Switch checked={excluded} onCheckedChange={setExcluded} />
             </label>
@@ -160,8 +162,7 @@ function EditTargetSheet({ target, onClose }: { target: Target | null; onClose: 
             </Button>
           </Guard>
         </SheetFooter>
-      </SheetContent>
-    </Sheet>
+    </>
   );
 }
 
@@ -274,7 +275,7 @@ export function TargetsView() {
             <Ban className="size-3" aria-hidden /> Wykluczony
           </Chip>
         ) : (
-          <span className="text-[0.8125rem] text-ink-2">{t.last_scanned_at ? fmtSmart(t.last_scanned_at) : "Jeszcze nie skanowano"}</span>
+          <span className="text-sm text-ink-2">{t.last_scanned_at ? fmtSmart(t.last_scanned_at) : "Jeszcze nie skanowano"}</span>
         ),
     },
     {
@@ -351,7 +352,7 @@ export function TargetsView() {
           </>
         }
       />
-      <Panel bodyClassName="p-0">
+      <Panel flush>
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
           <SearchInput
             value={q}

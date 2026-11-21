@@ -17,6 +17,7 @@ HackNation, задание №3 (AGH). Циклическое discovery-скан
 | `compose.yaml` | db + core + web (`frontend/`), профиль `lab` — тестовые сервисы для демо | все |
 | `docs/STATUS.md` | **что сейчас работает, а что нет** | все |
 | `docs/DEMO-VIDEO.md` | сценарий демо-видео | все |
+| `docs/API-CONTRACT.md` | контракт фронт ↔ бэкенд (`/api/v1`): каждый эндпоинт, права, SSE, форматы | C |
 
 ## Запуск
 

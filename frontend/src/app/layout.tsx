@@ -6,8 +6,8 @@ import "./globals.css";
 
 /* Atkinson Hyperlegible: designed for character disambiguation (0/O, 1/l/I) —
    it matters for IP addresses and hashes, and for public-sector accessibility. */
-const sans = Atkinson_Hyperlegible_Next({ variable: "--font-ahn", subsets: ["latin", "latin-ext"], display: "swap" });
-const mono = Atkinson_Hyperlegible_Mono({ variable: "--font-ahm", subsets: ["latin", "latin-ext"], display: "swap" });
+const sans = Atkinson_Hyperlegible_Next({ variable: "--font-ahn", subsets: ["latin", "latin-ext"], display: "swap", adjustFontFallback: false });
+const mono = Atkinson_Hyperlegible_Mono({ variable: "--font-ahm", subsets: ["latin", "latin-ext"], display: "swap", adjustFontFallback: false });
 
 export const metadata: Metadata = {
   title: { default: "Attack Surface Intelligence — CBI AGH", template: "%s — Attack Surface Intelligence" },

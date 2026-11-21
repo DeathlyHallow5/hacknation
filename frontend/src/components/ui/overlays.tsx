@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const overlayCls =
-  "fixed inset-0 z-50 bg-[#050c18]/55 backdrop-blur-[2px] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 contrast:bg-black/85 contrast:backdrop-blur-none";
+  "fixed inset-0 z-50 bg-scrim backdrop-blur-[2px] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 contrast:backdrop-blur-none";
 
 /* ------------------------------------------------------------------ */
 /* Dialog                                                              */
@@ -29,7 +29,7 @@ export function DialogContent({
       <DialogPrimitive.Overlay className={overlayCls} />
       <DialogPrimitive.Content
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 gap-5 overflow-y-auto rounded-2xl border border-line bg-surface p-6 text-ink shadow-pop data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-[0.97] data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-[0.97]",
+          "fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 gap-5 overflow-y-auto rounded-xl border border-line bg-surface p-6 text-ink shadow-pop data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-[0.97] data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-[0.97]",
           size === "sm" ? "max-w-md" : size === "md" ? "max-w-lg" : size === "lg" ? "max-w-2xl" : "max-w-4xl",
           className,
         )}
@@ -53,7 +53,7 @@ export function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLD
 }
 
 export function DialogTitle({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Title>) {
-  return <DialogPrimitive.Title className={cn("text-lg font-bold tracking-tight", className)} {...props} />;
+  return <DialogPrimitive.Title className={cn("text-lg font-semibold", className)} {...props} />;
 }
 
 export function DialogDescription({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Description>) {
@@ -139,8 +139,8 @@ export function ConfirmDialog({
     <AlertPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <AlertPrimitive.Portal>
         <AlertPrimitive.Overlay className={overlayCls} />
-        <AlertPrimitive.Content className="fixed top-1/2 left-1/2 z-50 grid w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 gap-4 rounded-2xl border border-line bg-surface p-6 text-ink shadow-pop data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-[0.97]">
-          <AlertPrimitive.Title className="text-lg font-bold tracking-tight">{title}</AlertPrimitive.Title>
+        <AlertPrimitive.Content className="fixed top-1/2 left-1/2 z-50 grid w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border border-line bg-surface p-6 text-ink shadow-pop data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-[0.97]">
+          <AlertPrimitive.Title className="text-lg font-semibold">{title}</AlertPrimitive.Title>
           <AlertPrimitive.Description className="text-sm leading-relaxed text-ink-2">{description}</AlertPrimitive.Description>
           <div className="mt-1 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <AlertPrimitive.Cancel asChild>
@@ -209,7 +209,7 @@ export function Tooltip({
           side={side}
           sideOffset={6}
           className={cn(
-            "z-[60] max-w-xs rounded-lg bg-chrome px-2.5 py-1.5 text-[0.8125rem] leading-snug text-chrome-ink shadow-pop data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 contrast:border contrast:border-white",
+            "z-[60] max-w-xs rounded-lg bg-chrome px-2.5 py-1.5 text-sm leading-snug text-chrome-ink shadow-pop data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 contrast:border contrast:border-white",
             className,
           )}
         >

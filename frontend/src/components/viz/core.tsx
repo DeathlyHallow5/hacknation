@@ -48,7 +48,7 @@ export function TipRow({ color, value, label }: { color?: string; value: React.R
   return (
     <div className="flex items-center gap-2 py-0.5">
       {color ? <span className="h-0.5 w-3 shrink-0 rounded-full" style={{ background: color }} aria-hidden /> : null}
-      <span className="tabular font-bold text-white contrast:text-white">{value}</span>
+      <span className="tabular font-semibold text-white contrast:text-white">{value}</span>
       <span className="text-chrome-ink-2">{label}</span>
     </div>
   );
@@ -68,10 +68,10 @@ export function LegendItem({
   className?: string;
 }) {
   return (
-    <span className={cn("inline-flex items-center gap-1.5 text-[0.8125rem] text-ink-2", className)}>
+    <span className={cn("inline-flex items-center gap-1.5 text-sm text-ink-2", className)}>
       <LegendGlyph shape={shape} color={color} />
       <span>{label}</span>
-      {value !== undefined ? <span className="tabular font-bold text-ink">{value}</span> : null}
+      {value !== undefined ? <span className="tabular font-semibold text-ink">{value}</span> : null}
     </span>
   );
 }
