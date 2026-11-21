@@ -127,6 +127,9 @@ mod tests {
     #[tokio::test]
     async fn normal_output_and_exit_code() {
         let sh = Path::new("/bin/sh");
+        if !sh.is_file() {
+            return;
+        }
         let out = run_path(sh, "sh", &["-c", "echo ok"], Duration::from_secs(5), 1024).await.unwrap();
         assert_eq!(out, "ok\n");
         let err = run_path(sh, "sh", &["-c", "echo boom >&2; exit 3"], Duration::from_secs(5), 1024).await.unwrap_err();
