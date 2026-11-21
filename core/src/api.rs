@@ -84,6 +84,8 @@ fn v1_routes() -> Router<AppState> {
 }
 
 pub(crate) type ApiError = (StatusCode, Json<Value>);
+#[cfg(test)]
+mod run_integrity_tests;
 pub(crate) type ApiResult<T> = Result<Json<T>, ApiError>;
 
 pub(crate) fn internal(e: impl std::fmt::Display) -> ApiError {
@@ -710,7 +712,7 @@ async fn get_run(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<R
 async fn cancel_run(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Value> {
     let n = sqlx::query(
         "UPDATE scan_runs SET status = 'cancelled', resume_at = NULL,
-             finished_at = CASE WHEN status = 'running' THEN finished_at ELSE now() END
+             finished_at = COALESCE(finished_at, now())
          WHERE id = $1 AND status IN ('queued', 'running', 'paused')",
     )
     .bind(id)
