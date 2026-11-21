@@ -6,6 +6,7 @@ mod config;
 mod diff;
 mod engine;
 mod fingerprint;
+mod history;
 mod input;
 mod parse;
 mod pipeline;
