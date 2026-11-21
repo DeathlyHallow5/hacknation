@@ -224,7 +224,7 @@ cd core && cargo test                           # 27 passed
 - nmap XML разбирается `roxmltree` с `allow_dtd`; httpx ставится под именем `pd-httpx` (конфликт с Python-утилитой `httpx`).
 - `ALTER TYPE ... ADD VALUE` (0005) работает в транзакции миграции на PG ≥ 12, но новое значение нельзя использовать в той же транзакции.
 - Контейнеры `core`/`web` — non-root, `cap_drop: ALL`, `no-new-privileges`; сканы только connect (`-sT`, naabu `-s c`), без `NET_RAW`.
-- Ветки агентов Claude Code создаются в `.claude/worktrees/` внутри репозитория; каждая сборка Rust там идёт с нуля.
+- Ветки агентов Claude Code создаются в `.claude/worktrees/` внутри репозитория (в `.gitignore`); каждая сборка Rust там идёт с нуля.
 
 ## 12. Как продолжить с Claude Code на новом ПК
 
