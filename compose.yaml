@@ -20,6 +20,8 @@ services:
     build:
       context: .
       dockerfile: core/Dockerfile
+      args:
+        BASE_REGISTRY: ${ASI_BASE_REGISTRY:-docker.io/library}
     init: true
     restart: unless-stopped
     ports:
@@ -48,6 +50,8 @@ services:
   web:
     build:
       context: ./frontend
+      args:
+        BASE_REGISTRY: ${ASI_BASE_REGISTRY:-docker.io/library}
     init: true
     restart: unless-stopped
     ports:

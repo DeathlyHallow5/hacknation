@@ -1,4 +1,7 @@
-FROM node:22-bookworm-slim AS deps
+# Base images come from Docker Hub; when its anonymous pull limit is hit (HTTP 429), build with
+# ASI_BASE_REGISTRY=mirror.gcr.io/library (Google's public Docker Hub cache).
+ARG BASE_REGISTRY=docker.io/library
+FROM ${BASE_REGISTRY}/node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -8,7 +11,7 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-FROM node:22-bookworm-slim AS runtime
+FROM ${BASE_REGISTRY}/node:22-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
 COPY --from=builder --chown=node:node /app/.next/standalone ./
