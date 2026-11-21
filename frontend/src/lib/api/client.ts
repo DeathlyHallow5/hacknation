@@ -35,6 +35,9 @@ function redirectToLogin() {
 export async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, query, signal } = opts;
   const headers: Record<string, string> = { Accept: "application/json" };
+  // The Rust API refuses cookie-authenticated writes without this header (CSRF guard);
+  // a cross-site form cannot set it.
+  if (method !== "GET") headers["X-ASI-CSRF"] = "1";
   let payload: BodyInit | undefined;
   if (body instanceof FormData) {
     payload = body;

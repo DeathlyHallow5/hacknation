@@ -9,8 +9,7 @@ ALTER TABLE targets
     -- Excluded targets are left out of new runs ("no-scan list").
     ADD COLUMN excluded    BOOLEAN NOT NULL DEFAULT false,
     ADD COLUMN source      TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'import')),
-    ADD COLUMN updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    ADD COLUMN updated_by  UUID REFERENCES users(id);
+    ADD COLUMN updated_by  UUID REFERENCES users(id);   -- updated_at exists since 0001
 
 -- Findings are derived from the latest run of each scan (admin panels, staging, risky
 -- ports...). Their id is deterministic (UUIDv5 of scan, category and entity key), so the
