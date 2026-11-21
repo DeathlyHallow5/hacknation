@@ -20,3 +20,4 @@ tools/nuclei-templates/
 # Claude Code agent worktrees (parallel work streams)
 .claude/worktrees/
 .vs/
+__pycache__/
