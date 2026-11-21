@@ -56,7 +56,7 @@ pub fn canonical_key(kind: &str, key: &str) -> Result<String, &'static str> {
 
 /// Trimmed text, `None` when empty; rejects over-long values and control characters
 /// (newlines/tabs allowed only in multi-line fields).
-fn text(v: Option<&str>, field: &str, max: usize, multiline: bool) -> Result<Option<String>, ApiError> {
+pub(crate) fn text(v: Option<&str>, field: &str, max: usize, multiline: bool) -> Result<Option<String>, ApiError> {
     let Some(v) = v.map(str::trim).filter(|v| !v.is_empty()) else { return Ok(None) };
     if v.chars().count() > max {
         return Err(bad(format!("{field} is longer than {max} characters")));
@@ -108,10 +108,10 @@ impl Fields {
     fn validate(b: &PutAnnotation) -> Result<Self, ApiError> {
         let mut tags: Vec<String> = Vec::new();
         for t in &b.tags {
-            if let Some(t) = text(Some(t.as_str()), "tag", 64, false)? {
-                if !tags.contains(&t) {
-                    tags.push(t);
-                }
+            if let Some(t) = text(Some(t.as_str()), "tag", 64, false)?
+                && !tags.contains(&t)
+            {
+                tags.push(t);
             }
         }
         if tags.len() > 32 {

@@ -2,12 +2,15 @@
 //! Architecture and module map: see ../PROJECT.md.
 
 mod api;
+mod audit;
+mod auth;
 mod config;
 mod diff;
 mod engine;
 mod fingerprint;
 mod history;
 mod input;
+mod overlay;
 mod parse;
 mod pipeline;
 mod rbac;
@@ -15,6 +18,7 @@ mod scheduler;
 
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
@@ -23,6 +27,7 @@ use tracing_subscriber::EnvFilter;
 pub struct AppState {
     pub db: sqlx::PgPool,
     pub config: Arc<config::Config>,
+    pub limiter: Arc<auth::LoginLimiter>,
 }
 
 #[tokio::main]
@@ -37,14 +42,20 @@ async fn main() -> Result<()> {
         .connect(&config.database_url)
         .await?;
     sqlx::migrate!("./migrations").run(&db).await?;
+    auth::bootstrap_admin(&db, &config).await?;
 
     let addr = config.bind_addr.clone();
-    let state = AppState { db, config: Arc::new(config) };
-    tokio::spawn(scheduler::run(state.clone()));
+    let state = AppState { db, config: Arc::new(config), limiter: Arc::default() };
+    if state.config.max_runs > 0 {
+        tokio::spawn(scheduler::run(state.clone()));
+    } else {
+        tracing::info!("ASI_MAX_RUNS=0: API only, the scheduler is not started");
+    }
     let app = api::router(state).layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("asi-core listening on {addr}");
-    axum::serve(listener, app).await?;
+    // Client addresses feed the login limiter and the audit trail.
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
     Ok(())
 }

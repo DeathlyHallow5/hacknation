@@ -4,6 +4,7 @@
 # Needs: docker compose --profile lab up -d, curl, python3.
 set -euo pipefail
 API=${API:-http://127.0.0.1:8000/api}
+. "$(dirname "$0")/_auth.sh"
 NAME=${1:-lab $(date +%H:%M:%S)}
 EXTRA=${2:-}
 
