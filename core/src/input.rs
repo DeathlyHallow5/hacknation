@@ -83,6 +83,20 @@ pub fn slice(targets: &[Target], offset: u128, size: usize) -> Vec<String> {
     out
 }
 
+/// Is this observed host covered by the target list? (Used so hosts of targets removed
+/// from a scan are not reported as "gone".)
+pub fn contains(targets: &[Target], ip: &str, hostname: Option<&str>) -> bool {
+    let addr: Option<std::net::IpAddr> = ip.parse().ok();
+    targets.iter().any(|t| match t.kind {
+        TargetKind::Ip => t.value == ip,
+        TargetKind::Cidr => match (t.value.parse::<IpNet>(), addr) {
+            (Ok(net), Some(a)) => net.contains(&a),
+            _ => false,
+        },
+        TargetKind::Domain => hostname == Some(t.value.as_str()),
+    })
+}
+
 pub fn total_hosts(targets: &[Target]) -> u128 {
     targets.iter().map(Target::host_count).sum()
 }

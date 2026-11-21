@@ -26,12 +26,13 @@ use uuid::Uuid;
 /// disable `preflight` on the scan for such networks.
 const PREFLIGHT_PORTS: &str = "-PS21,22,23,25,53,80,110,135,139,143,443,445,3389,8080,8443";
 /// Hard cap per tool invocation when the scan has no window.
-const MAX_TOOL_TIME: Duration = Duration::from_secs(30 * 60);
+pub(crate) const MAX_TOOL_TIME: Duration = Duration::from_secs(30 * 60);
 /// Default period between windows if the scan has a window but no repeat interval.
 const DEFAULT_WINDOW_PERIOD_MIN: i64 = 24 * 60;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ScanConfig {
+    pub inactive_after_misses: i32,
     pub rate_limit_pps: i32,
     pub window_minutes: Option<i32>,
     pub repeat_every_minutes: Option<i32>,
@@ -72,6 +73,11 @@ pub struct RunStats {
     pub admin_panels: u64,
     pub staging: u64,
     pub pauses: u64,
+    /// Hosts re-scanned at the end because they (or some ports) went missing.
+    pub rechecked: u64,
+    /// Missing hosts that answered the re-check (transient misses, not changes).
+    pub recovered: u64,
+    pub diff: Option<crate::history::DiffSummary>,
     pub errors: Vec<String>,
 }
 
@@ -86,7 +92,7 @@ impl RunStats {
         self.staging += b.staging;
     }
 
-    fn error(&mut self, msg: String) {
+    pub(crate) fn error(&mut self, msg: String) {
         tracing::warn!("{msg}");
         self.errors.push(msg);
         if self.errors.len() > 20 {
@@ -157,7 +163,7 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
     .fetch_one(db)
     .await?;
     let scan: ScanConfig = sqlx::query_as(
-        "SELECT rate_limit_pps, window_minutes, repeat_every_minutes, ports, batch_size, preflight
+        "SELECT inactive_after_misses, rate_limit_pps, window_minutes, repeat_every_minutes, ports, batch_size, preflight
          FROM scans WHERE id = $1",
     )
     .bind(run.scan_id)
@@ -244,6 +250,7 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
 
     match outcome {
         Outcome::Done => {
+            crate::history::finalize(&state, &scan, run_id, &targets, &mut stats, deadline).await;
             sqlx::query("UPDATE scan_runs SET status = 'done', finished_at = now(), stats = $2 WHERE id = $1 AND status = 'running'")
                 .bind(run_id)
                 .bind(sqlx::types::Json(&stats))
@@ -298,7 +305,7 @@ impl Drop for ListFile {
     }
 }
 
-async fn run_batch(
+pub(crate) async fn run_batch(
     state: &AppState,
     scan: &ScanConfig,
     run_id: Uuid,
@@ -482,7 +489,12 @@ async fn run_batch(
             "INSERT INTO http_findings (service_id, url, status_code, title, redirects, technologies, cms,
                 favicon_hash, is_admin, is_staging, headers_enc, cookies_enc, tls_enc, raw_enc)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                pgp_sym_encrypt($11, $15), pgp_sym_encrypt($12, $15), pgp_sym_encrypt($13, $15), pgp_sym_encrypt($14, $15))",
+                pgp_sym_encrypt($11, $15), pgp_sym_encrypt($12, $15), pgp_sym_encrypt($13, $15), pgp_sym_encrypt($14, $15))
+             ON CONFLICT (service_id, url) DO UPDATE SET status_code = EXCLUDED.status_code, title = EXCLUDED.title,
+                redirects = EXCLUDED.redirects, technologies = EXCLUDED.technologies, cms = EXCLUDED.cms,
+                favicon_hash = EXCLUDED.favicon_hash, is_admin = EXCLUDED.is_admin, is_staging = EXCLUDED.is_staging,
+                headers_enc = EXCLUDED.headers_enc, cookies_enc = EXCLUDED.cookies_enc,
+                tls_enc = EXCLUDED.tls_enc, raw_enc = EXCLUDED.raw_enc",
         )
         .bind(service_id)
         .bind(&rec.url)

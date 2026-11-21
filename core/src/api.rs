@@ -2,9 +2,9 @@
 //! TODO(C): auth + RBAC extractor (rbac::Role::can) on every route; decrypted evidence in
 //! `/runs/{id}/findings` must then require at least `Read` on the scan.
 
-use crate::{engine::Tool, input, pipeline, AppState};
+use crate::{diff::DiffEntry, engine::Tool, history, input, pipeline, AppState};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{get, post},
     Json, Router,
@@ -24,6 +24,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/scans/{id}/runs", get(list_runs))
         .route("/api/runs/{id}", get(get_run))
         .route("/api/runs/{id}/findings", get(run_findings))
+        .route("/api/runs/{id}/diff", get(run_diff))
         .route("/api/runs/{id}/cancel", post(cancel_run))
         .with_state(state)
 }
@@ -139,6 +140,7 @@ struct ScanRow {
     ports: String,
     batch_size: i32,
     preflight: bool,
+    inactive_after_misses: i32,
     next_run_at: Option<chrono::DateTime<chrono::Utc>>,
     target_count: i64,
     last_run_id: Option<Uuid>,
@@ -149,7 +151,7 @@ struct ScanRow {
 async fn list_scans(State(s): State<AppState>) -> ApiResult<Vec<ScanRow>> {
     let rows = sqlx::query_as::<_, ScanRow>(
         "SELECT s.id, s.name, s.enabled, s.rate_limit_pps, s.window_minutes, s.repeat_every_minutes,
-                s.ports, s.batch_size, s.preflight, s.next_run_at, s.created_at,
+                s.ports, s.batch_size, s.preflight, s.inactive_after_misses, s.next_run_at, s.created_at,
                 (SELECT count(*) FROM scan_targets st WHERE st.scan_id = s.id) AS target_count,
                 r.id AS last_run_id, r.status::text AS last_run_status
          FROM scans s
@@ -181,6 +183,9 @@ struct CreateScan {
     batch_size: i32,
     #[serde(default = "yes")]
     preflight: bool,
+    /// Consecutive missed runs before a host is reported Inactive.
+    #[serde(default = "default_misses")]
+    inactive_after_misses: i32,
     /// Start immediately (default). `false` = saved, start later via /scans/{id}/run.
     #[serde(default = "yes")]
     start: bool,
@@ -193,6 +198,9 @@ fn default_ports() -> String {
 }
 fn default_batch() -> i32 {
     256
+}
+fn default_misses() -> i32 {
+    3
 }
 fn yes() -> bool {
     true
@@ -219,6 +227,9 @@ async fn create_scan(State(s): State<AppState>, Json(b): Json<CreateScan>) -> Ap
             return Err(bad("repeat_every_minutes must be >= window_minutes"));
         }
     }
+    if !(1..=100).contains(&b.inactive_after_misses) {
+        return Err(bad("inactive_after_misses must be 1..=100"));
+    }
     let (targets, errors) = input::parse_list(&b.targets);
     if targets.is_empty() && b.target_ids.is_empty() {
         return Err(bad("no valid targets"));
@@ -228,8 +239,9 @@ async fn create_scan(State(s): State<AppState>, Json(b): Json<CreateScan>) -> Ap
     let (mut ids, _) = upsert_targets(&mut tx, &targets).await?;
     ids.extend(&b.target_ids);
     let scan_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO scans (name, rate_limit_pps, window_minutes, repeat_every_minutes, ports, batch_size, preflight, next_run_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $8 THEN now() ELSE NULL END) RETURNING id",
+        "INSERT INTO scans (name, rate_limit_pps, window_minutes, repeat_every_minutes, ports, batch_size, preflight,
+                            inactive_after_misses, next_run_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $9, CASE WHEN $8 THEN now() ELSE NULL END) RETURNING id",
     )
     .bind(b.name.trim())
     .bind(b.rate_limit_pps)
@@ -239,6 +251,7 @@ async fn create_scan(State(s): State<AppState>, Json(b): Json<CreateScan>) -> Ap
     .bind(b.batch_size)
     .bind(b.preflight)
     .bind(b.start)
+    .bind(b.inactive_after_misses)
     .fetch_one(&mut *tx)
     .await
     .map_err(internal)?;
@@ -343,6 +356,10 @@ struct HostOut {
     address: String,
     hostname: Option<String>,
     state: String,
+    miss_count: i32,
+    flaps: i32,
+    first_seen_at: chrono::DateTime<chrono::Utc>,
+    seen_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -379,7 +396,7 @@ struct HttpOut {
 async fn run_findings(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Value> {
     let key = s.config.data_key.as_str();
     let hosts = sqlx::query_as::<_, HostOut>(
-        "SELECT id, host(address) AS address, hostname, state::text AS state
+        "SELECT id, host(address) AS address, hostname, state::text AS state, miss_count, flaps, first_seen_at, seen_at
          FROM hosts WHERE run_id = $1 ORDER BY address",
     )
     .bind(id)
@@ -426,8 +443,81 @@ async fn run_findings(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiRes
         .into_iter()
         .map(|h| {
             let services = services_by_host.remove(&h.id).unwrap_or_default();
-            json!({ "address": h.address, "hostname": h.hostname, "state": h.state, "services": services })
+            json!({
+                "address": h.address, "hostname": h.hostname, "state": h.state,
+                "miss_count": h.miss_count, "flaps": h.flaps, "unstable": h.flaps > 0 || h.state != "active",
+                "first_seen_at": h.first_seen_at, "last_seen_at": h.seen_at, "services": services,
+            })
         })
         .collect();
     Ok(Json(json!({ "run_id": id, "hosts": hosts })))
+}
+
+// ---------- diff ----------
+
+#[derive(Deserialize)]
+struct DiffQuery {
+    /// Compare with any other run instead of the stored diff vs the previous run.
+    against: Option<Uuid>,
+}
+
+#[derive(sqlx::FromRow)]
+struct DiffRow {
+    run_a: Uuid,
+    kind: String,
+    entity: String,
+    change: String,
+    field: Option<String>,
+    old_value: Option<String>,
+    new_value: Option<String>,
+    confidence: f32,
+    interest: i16,
+}
+
+/// Changes of a run: stored diff vs the previous finished run of the same scan, or a live
+/// comparison with `?against=<run_id>`. Sorted by interest (3 = most important) first.
+async fn run_diff(State(s): State<AppState>, Path(id): Path<Uuid>, Query(q): Query<DiffQuery>) -> ApiResult<Value> {
+    let key = s.config.data_key.as_str();
+    let (against, entries): (Option<Uuid>, Vec<Value>) = match q.against {
+        Some(a) => {
+            let entries: Vec<DiffEntry> = history::compare(&s.db, a, id, key).await.map_err(internal)?;
+            (Some(a), entries.iter().map(|e| serde_json::to_value(e).unwrap_or_default()).collect())
+        }
+        None => {
+            let rows = sqlx::query_as::<_, DiffRow>(
+                "SELECT run_a, kind, entity, change::text AS change, field,
+                        pgp_sym_decrypt(old_enc, $2) AS old_value, pgp_sym_decrypt(new_enc, $2) AS new_value,
+                        confidence, interest
+                 FROM diffs WHERE run_b = $1 ORDER BY interest DESC, kind, entity",
+            )
+            .bind(id)
+            .bind(key)
+            .fetch_all(&s.db)
+            .await
+            .map_err(internal)?;
+            let against = match rows.first() {
+                Some(r) => Some(r.run_a),
+                None => history::previous_run(&s.db, id).await.map_err(internal)?,
+            };
+            let entries = rows
+                .into_iter()
+                .map(|r| json!({
+                    "kind": r.kind, "entity": r.entity, "change": r.change, "field": r.field,
+                    "old_value": r.old_value, "new_value": r.new_value,
+                    "confidence": r.confidence, "interest": r.interest,
+                }))
+                .collect();
+            (against, entries)
+        }
+    };
+    let count = |c: &str| entries.iter().filter(|e| e["change"] == c).count();
+    Ok(Json(json!({
+        "run_b": id,
+        "run_a": against,
+        "summary": {
+            "new": count("new"), "gone": count("gone"), "changed": count("changed"),
+            "important": entries.iter().filter(|e| e["interest"].as_i64() >= Some(3)).count(),
+        },
+        "entries": entries,
+    })))
 }
