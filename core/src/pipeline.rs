@@ -522,7 +522,11 @@ pub(crate) async fn run_batch(
         let xml = engine::run(
             tools,
             Tool::Nmap,
-            &["-sn", "-n", PREFLIGHT_PORTS, "--max-rate", &rate, "-oX", "-", "-iL", list.arg()],
+            // -T4 --max-retries 0: unprivileged nmap pings with connect(); with retries, the
+            // connects to dead addresses pile up and a /22 took ~160 s at 100% CPU — 6 s
+            // without (same hosts found). A lost probe only loses a host with no open port in
+            // the list: step 2 still scans every input, with a retry.
+            &["-sn", "-n", "-T4", "--max-retries", "0", PREFLIGHT_PORTS, "--max-rate", &rate, "-oX", "-", "-iL", list.arg()],
             left(),
         )
         .await
