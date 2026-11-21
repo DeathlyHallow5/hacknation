@@ -1,0 +1,8 @@
+value,name,owner,criticality,tags,notes,excluded
+10.0.96.0/22,Pracownia sieci komputerowych,Wydział Informatyki,low,laboratorium|dydaktyka,Sprzęt studencki — duża zmienność,false
+10.0.40.66,Serwer FTP wydziału,Wydział Górnictwa i Geoinżynierii,medium,serwerownia,,false
+konferencja.wydzial-fizyki.uczelnia.example,Strona konferencji,Wydział Fizyki i Informatyki Stosowanej,high,www|dmz,,false
+10.0.250.0/24,Systemy BMS,Dział Techniczny,critical,bms,Nie skanować — urządzenia wrażliwe,true
+10.0.12.0/24,Stare serwery rekrutacji,Dział Rekrutacji,medium,serwerownia,,false
+300.12.1.1,Błędny adres (do testu walidacji),,low,,,false
+10.0.12.0/24,Duplikat (do testu walidacji),,low,,,false
