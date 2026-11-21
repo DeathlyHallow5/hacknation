@@ -121,10 +121,12 @@ fn session_token(headers: &HeaderMap) -> Option<(String, bool)> {
         .map(|(_, value)| (value.to_string(), true))
 }
 
-fn session_cookie(token: &str, max_age_secs: i64, secure: bool) -> HeaderValue {
+/// Path=/ because the dashboard's page guard (Next.js) checks the cookie on page routes too;
+/// HttpOnly + SameSite=Strict keep it out of scripts and cross-site requests.
+pub(crate) fn session_cookie(token: &str, max_age_secs: i64, secure: bool) -> HeaderValue {
     let secure = if secure { "; Secure" } else { "" };
     HeaderValue::from_str(&format!(
-        "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/api; Max-Age={max_age_secs}{secure}"
+        "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age_secs}{secure}"
     ))
     .expect("cookie value is ASCII")
 }
@@ -208,9 +210,14 @@ impl LoginLimiter {
 
 // ---------- gate ----------
 
+/// `detail` for `/api`, `error` for the dashboard contract (`/api/v1`).
 fn deny(status: StatusCode) -> Response {
-    let detail = if status == StatusCode::UNAUTHORIZED { "authentication required" } else { "forbidden" };
-    (status, Json(json!({ "detail": detail }))).into_response()
+    let (detail, code, message) = if status == StatusCode::UNAUTHORIZED {
+        ("authentication required", "unauthorized", "Sesja wygasła lub nie jesteś zalogowany.")
+    } else {
+        ("forbidden", "forbidden", "Twoja rola nie ma uprawnienia do tej operacji.")
+    };
+    (status, Json(json!({ "detail": detail, "error": { "code": code, "message": message } }))).into_response()
 }
 
 fn is_safe(method: &Method) -> bool {
@@ -331,11 +338,33 @@ fn normalize_username(name: &str) -> Result<String, ApiError> {
     if ok { Ok(name) } else { Err(bad("username must be 3..=64 characters: a-z, 0-9, '.', '_', '-'")) }
 }
 
-/// `POST /api/auth/login` → `{token, expires_at, user}` + session cookie.
-pub async fn login(State(s): State<AppState>, Extension(ClientIp(ip)): Extension<ClientIp>, Json(b): Json<LoginBody>) -> Response {
-    // Same reply for every failure: no hint whether the login exists.
-    let invalid = || (StatusCode::UNAUTHORIZED, Json(json!({ "detail": "invalid credentials" }))).into_response();
-    let username = b.username.trim().to_ascii_lowercase();
+pub(crate) struct SignedIn {
+    pub token: String,
+    pub expires_at: DateTime<Utc>,
+    pub user_id: Uuid,
+    pub username: String,
+    pub role: Role,
+    pub can_execute_scans: bool,
+}
+
+pub(crate) enum SignInError {
+    /// Wrong login or password (one answer for both).
+    Invalid,
+    /// Over the login limiter.
+    Limited,
+    Internal,
+}
+
+/// Check the password, open a session, write the audit row. Shared by `/api/auth/login`
+/// and the dashboard's `/api/v1/auth/login`; `route` is the path recorded in the audit.
+pub(crate) async fn sign_in(
+    s: &AppState,
+    ip: Option<IpAddr>,
+    login: &str,
+    password: String,
+    route: &'static str,
+) -> Result<SignedIn, SignInError> {
+    let username = login.trim().to_ascii_lowercase();
     let shown: String = username.chars().take(64).collect();
     let event = |user_id: Option<Uuid>, status: StatusCode, outcome: Outcome| Event {
         user_id,
@@ -344,49 +373,46 @@ pub async fn login(State(s): State<AppState>, Extension(ClientIp(ip)): Extension
         entity_id: user_id.map(|id| id.to_string()),
         details: json!({ "username": shown }),
         ip,
-        request: Some(("POST".into(), "/api/auth/login".into())),
+        request: Some(("POST".into(), route.into())),
         status: Some(status.as_u16()),
         outcome,
     };
 
     if s.limiter.blocked(&username, ip) {
         audit::record(&s.db, event(None, StatusCode::TOO_MANY_REQUESTS, Outcome::Denied)).await;
-        return (StatusCode::TOO_MANY_REQUESTS, Json(json!({ "detail": "too many failed logins, try later" })))
-            .into_response();
+        return Err(SignInError::Limited);
     }
-    if b.password.chars().count() > *PASSWORD_LEN.end() {
+    if password.chars().count() > *PASSWORD_LEN.end() {
         s.limiter.failure(&username, ip);
-        return invalid();
+        return Err(SignInError::Invalid);
     }
 
-    let row: Option<(Uuid, String, String, Role, bool, bool)> = match sqlx::query_as(
+    let row: Option<(Uuid, String, String, Role, bool, bool)> = sqlx::query_as(
         "SELECT id, username, password_hash, role, can_execute_scans, disabled FROM users WHERE username = $1",
     )
     .bind(&username)
     .fetch_optional(&s.db)
     .await
-    {
-        Ok(r) => r,
-        Err(e) => return internal(e).into_response(),
-    };
+    .map_err(|e| {
+        tracing::error!("login lookup: {e}");
+        SignInError::Internal
+    })?;
     let hash = match &row {
         Some((_, _, h, _, _, false)) => h.clone(),
         _ => DUMMY_HASH.clone(),
     };
-    let password = b.password;
     let verified = tokio::task::spawn_blocking(move || verify_password(&password, &hash)).await.unwrap_or(false);
     let Some((user_id, username, _, role, can_execute_scans, false)) = row.filter(|_| verified) else {
         s.limiter.failure(&username, ip);
         audit::record(&s.db, event(None, StatusCode::UNAUTHORIZED, Outcome::Failure)).await;
-        return invalid();
+        return Err(SignInError::Invalid);
     };
     s.limiter.success(&username);
 
-    let token = match new_token() {
-        Ok(t) => t,
-        Err(e) => return internal(e).into_response(),
-    };
-    let ttl_hours = s.config.session_ttl_hours;
+    let token = new_token().map_err(|e| {
+        tracing::error!("{e}");
+        SignInError::Internal
+    })?;
     let session: Result<DateTime<Utc>, sqlx::Error> = async {
         let mut tx = s.db.begin().await?;
         let expires_at: DateTime<Utc> = sqlx::query_scalar(
@@ -396,7 +422,7 @@ pub async fn login(State(s): State<AppState>, Extension(ClientIp(ip)): Extension
         .bind(user_id)
         .bind(token_hash(&token))
         .bind(ip.map(|ip| ip.to_string()))
-        .bind(ttl_hours as i32)
+        .bind(s.config.session_ttl_hours as i32)
         .fetch_one(&mut *tx)
         .await?;
         sqlx::query("UPDATE users SET last_login_at = now() WHERE id = $1").bind(user_id).execute(&mut *tx).await?;
@@ -404,18 +430,40 @@ pub async fn login(State(s): State<AppState>, Extension(ClientIp(ip)): Extension
         Ok(expires_at)
     }
     .await;
-    let expires_at = match session {
-        Ok(t) => t,
-        Err(e) => return internal(e).into_response(),
-    };
+    let expires_at = session.map_err(|e| {
+        tracing::error!("session insert: {e}");
+        SignInError::Internal
+    })?;
     audit::record(&s.db, event(Some(user_id), StatusCode::OK, Outcome::Success)).await;
+    Ok(SignedIn { token, expires_at, user_id, username, role, can_execute_scans })
+}
 
-    let user = json!({ "id": user_id, "username": username, "role": role, "can_execute_scans": can_execute_scans });
-    let mut response = Json(json!({ "token": token, "expires_at": expires_at, "user": user })).into_response();
+/// Attach the session cookie to a login response.
+pub(crate) fn with_session_cookie(mut response: Response, s: &AppState, token: &str) -> Response {
+    let max_age = s.config.session_ttl_hours * 3600;
+    response.headers_mut().insert(header::SET_COOKIE, session_cookie(token, max_age, s.config.cookie_secure));
     response
-        .headers_mut()
-        .insert(header::SET_COOKIE, session_cookie(&token, ttl_hours * 3600, s.config.cookie_secure));
-    response
+}
+
+/// `POST /api/auth/login` → `{token, expires_at, user}` + session cookie.
+pub async fn login(State(s): State<AppState>, Extension(ClientIp(ip)): Extension<ClientIp>, Json(b): Json<LoginBody>) -> Response {
+    match sign_in(&s, ip, &b.username, b.password, "/api/auth/login").await {
+        Ok(si) => {
+            let user = json!({
+                "id": si.user_id, "username": si.username, "role": si.role, "can_execute_scans": si.can_execute_scans,
+            });
+            let body = Json(json!({ "token": si.token, "expires_at": si.expires_at, "user": user })).into_response();
+            with_session_cookie(body, &s, &si.token)
+        }
+        // Same reply for every failure: no hint whether the login exists.
+        Err(SignInError::Invalid) => {
+            (StatusCode::UNAUTHORIZED, Json(json!({ "detail": "invalid credentials" }))).into_response()
+        }
+        Err(SignInError::Limited) => {
+            (StatusCode::TOO_MANY_REQUESTS, Json(json!({ "detail": "too many failed logins, try later" }))).into_response()
+        }
+        Err(SignInError::Internal) => internal("login failed").into_response(),
+    }
 }
 
 /// `POST /api/auth/logout` — revokes the current session and clears the cookie.
@@ -709,7 +757,7 @@ mod tests {
     fn cookie_attributes() {
         let c = session_cookie("tok", 3600, true);
         let c = c.to_str().unwrap();
-        for part in ["asi_session=tok", "HttpOnly", "SameSite=Strict", "Path=/api", "Max-Age=3600", "Secure"] {
+        for part in ["asi_session=tok", "HttpOnly", "SameSite=Strict", "Path=/;", "Max-Age=3600", "Secure"] {
             assert!(c.contains(part), "{c} lacks {part}");
         }
         assert!(!session_cookie("tok", 3600, false).to_str().unwrap().contains("Secure"));

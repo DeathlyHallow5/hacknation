@@ -46,10 +46,41 @@ pub fn router(state: AppState) -> Router {
         .route("/api/runs/{id}", get(get_run))
         .route("/api/runs/{id}/findings", get(run_findings))
         .route("/api/runs/{id}/diff", get(run_diff))
-        .route("/api/runs/{id}/cancel", post(cancel_run));
+        .route("/api/runs/{id}/cancel", post(cancel_run))
+        .merge(v1_routes());
     // Add routes and `.merge(...)`s ABOVE this line: the gate covers only what exists when
     // it is installed. New routes also need a row in `rbac::ROUTES` (else admin-only).
     api.route_layer(middleware::from_fn_with_state(state.clone(), auth::gate)).with_state(state)
+}
+
+/// The dashboard contract (`/api/v1`, see `v1.rs`), behind the same gate.
+fn v1_routes() -> Router<AppState> {
+    use crate::v1;
+    Router::new()
+        .route("/api/v1/auth/login", post(v1::login))
+        .route("/api/v1/auth/logout", post(auth::logout))
+        .route("/api/v1/auth/me", get(v1::me))
+        .route("/api/v1/dashboard/summary", get(v1::summary))
+        .route("/api/v1/dashboard/top-findings", get(v1::top_findings))
+        .route("/api/v1/dashboard/changes-timeline", get(v1::changes_timeline))
+        .route("/api/v1/dashboard/availability", get(v1::availability))
+        .route("/api/v1/dashboard/technologies", get(v1::technologies))
+        .route("/api/v1/dashboard/address-map", get(v1::address_map))
+        .route("/api/v1/search", get(v1::search))
+        .route("/api/v1/targets", get(v1::list_targets).post(v1::create_targets))
+        .route("/api/v1/targets/export", get(v1::export_targets))
+        .route(
+            "/api/v1/targets/import",
+            post(v1::import_targets).layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)),
+        )
+        .route("/api/v1/targets/bulk", post(v1::bulk_targets))
+        .route("/api/v1/targets/{id}", get(v1::get_target).patch(v1::update_target).delete(v1::delete_target))
+        .route("/api/v1/scans", get(v1::list_scans))
+        .route("/api/v1/findings", get(v1::list_findings))
+        .route("/api/v1/findings/export", get(v1::export_findings))
+        .route("/api/v1/findings/defectdojo", post(v1::defectdojo_export))
+        .route("/api/v1/findings/{id}", get(v1::get_finding).patch(v1::update_finding))
+        .route("/api/v1/audit", get(v1::audit_list))
 }
 
 pub(crate) type ApiError = (StatusCode, Json<Value>);
@@ -457,7 +488,7 @@ async fn create_scan(
 }
 
 /// `Some(value)` for a field that is present, also when it is null (to clear it).
-fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+pub(crate) fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
     T::deserialize(d).map(Some)
 }
 

@@ -15,6 +15,7 @@ mod parse;
 mod pipeline;
 mod rbac;
 mod scheduler;
+mod v1;
 
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;

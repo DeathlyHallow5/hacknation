@@ -1,5 +1,10 @@
 # Sourced by the lab scripts: signs in once and makes every `curl` send the session token.
 # Credentials: ASI_ADMIN_USER / ASI_ADMIN_PASSWORD from the environment, else from .env.
+
+# On Windows (Git Bash) `python3` is often only the Microsoft Store stub.
+if ! python3 -c '' >/dev/null 2>&1; then
+  python3() { python "$@"; }
+fi
 ENV_FILE=${ENV_FILE:-"$(dirname "${BASH_SOURCE[0]}")/../.env"}
 env_value() { [ -f "$ENV_FILE" ] && sed -n "s/^$1=//p" "$ENV_FILE" | tail -n1; }
 ASI_ADMIN_USER=${ASI_ADMIN_USER:-$(env_value ASI_ADMIN_USER)}

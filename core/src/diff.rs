@@ -90,7 +90,7 @@ pub struct DiffEntry {
 }
 
 /// Ports whose sudden appearance deserves attention (remote admin, databases, caches...).
-const RISKY_PORTS: &[u16] = &[
+pub(crate) const RISKY_PORTS: &[u16] = &[
     21, 23, 445, 1433, 1521, 2375, 2376, 3306, 3389, 5432, 5900, 5984, 6379, 9200, 11211, 27017,
 ];
 
