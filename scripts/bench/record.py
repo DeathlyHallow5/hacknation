@@ -35,8 +35,7 @@ def record(plan, result, ports, rate, note="", when=None, rev=None):
     run = result["run"]
     when = when or datetime.datetime.now()
     name = f"{when:%Y-%m-%d-%H%M}-{result['label']}.json"
-    json.dump(result, open(DIR / name, "w", encoding="utf-8", newline="
-"), indent=1, default=str)
+    json.dump(result, open(DIR / name, "w", encoding="utf-8", newline="\n"), indent=1, default=str)
     inside = covered(plan, result)
     missing = set(result["missing"])
     samples = result["samples"]
