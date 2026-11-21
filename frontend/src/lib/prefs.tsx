@@ -19,14 +19,37 @@ const DEFAULTS: Prefs = { theme: "light", text: "md", motion: "full" };
 /** Runs in <head> before first paint, so there is no flash of the wrong theme/size. */
 export const PREFS_SCRIPT = `(function(){try{var p=JSON.parse(localStorage.getItem("${PREFS_KEY}")||"{}");var d=document.documentElement;if(p.theme)d.setAttribute("data-theme",p.theme);if(p.text&&p.text!=="md")d.setAttribute("data-text",p.text);if(p.motion==="reduce")d.setAttribute("data-motion","reduce")}catch(e){}})()`;
 
-function read(): Prefs {
-  if (typeof window === "undefined") return DEFAULTS;
+/* A tiny external store over localStorage (read through useSyncExternalStore). */
+let cache: Prefs | null = null;
+const listeners = new Set<() => void>();
+
+function readStorage(): Prefs {
   try {
     return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") };
   } catch {
     return DEFAULTS;
   }
 }
+
+const store = {
+  get(): Prefs {
+    if (!cache) cache = readStorage();
+    return cache;
+  },
+  set(patch: Partial<Prefs>) {
+    cache = { ...store.get(), ...patch };
+    try {
+      localStorage.setItem(PREFS_KEY, JSON.stringify(cache));
+    } catch {
+      /* storage may be unavailable */
+    }
+    listeners.forEach((l) => l());
+  },
+  subscribe(l: () => void) {
+    listeners.add(l);
+    return () => listeners.delete(l);
+  },
+};
 
 function apply(p: Prefs) {
   const d = document.documentElement;
@@ -40,34 +63,16 @@ function apply(p: Prefs) {
 const Ctx = React.createContext<{ prefs: Prefs; set: (patch: Partial<Prefs>) => void } | null>(null);
 
 export function PrefsProvider({ children }: { children: React.ReactNode }) {
-  // Start from defaults so server and client render the same markup; the inline
-  // script has already applied the stored values to <html> before paint.
-  const [prefs, setPrefs] = React.useState<Prefs>(DEFAULTS);
+  // Server and the hydration pass see DEFAULTS; the stored value comes right after.
+  const prefs = React.useSyncExternalStore(store.subscribe, store.get, () => DEFAULTS);
 
+  // Keep <html> in sync (also re-applies after React's dev remount resets attributes).
   React.useLayoutEffect(() => {
-    if (prefs === DEFAULTS) {
-      const stored = read();
-      apply(stored);
-      setPrefs(stored);
-      return;
-    }
-    // Also re-applies after React's dev remount resets <html> attributes.
     apply(prefs);
   }, [prefs]);
 
-  const set = React.useCallback((patch: Partial<Prefs>) => {
-    setPrefs((prev) => {
-      const next = { ...prev, ...patch };
-      try {
-        localStorage.setItem(PREFS_KEY, JSON.stringify(next));
-      } catch {
-        /* storage may be unavailable */
-      }
-      return next;
-    });
-  }, []);
-
-  return <Ctx.Provider value={{ prefs, set }}>{children}</Ctx.Provider>;
+  const value = React.useMemo(() => ({ prefs, set: store.set }), [prefs]);
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function usePrefs() {
@@ -76,15 +81,18 @@ export function usePrefs() {
   return ctx;
 }
 
+function subscribeMotion(cb: () => void) {
+  const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+}
+
 export function usePrefersReducedMotion() {
   const { prefs } = usePrefs();
-  const [system, setSystem] = React.useState(false);
-  React.useEffect(() => {
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    setSystem(mq.matches);
-    const on = () => setSystem(mq.matches);
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
-  }, []);
+  const system = React.useSyncExternalStore(
+    subscribeMotion,
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    () => false,
+  );
   return prefs.motion === "reduce" || system;
 }

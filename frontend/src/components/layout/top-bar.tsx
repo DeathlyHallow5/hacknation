@@ -129,6 +129,8 @@ function UserMenu() {
   const can = useCan();
   const logout = async () => {
     await api.auth.logout().catch(() => undefined);
+    // Full reload on purpose: clears all client state of the previous user.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.href = "/login";
   };
   return (

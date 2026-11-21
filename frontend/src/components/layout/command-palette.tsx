@@ -20,6 +20,18 @@ function useDebounced<T>(value: T, ms = 220) {
 }
 
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="lg" hideClose className="gap-0 overflow-hidden p-0" aria-describedby={undefined}>
+        <DialogTitle className="sr-only">Wyszukiwanie i polecenia</DialogTitle>
+        <PaletteBody onOpenChange={onOpenChange} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Rendered inside the dialog content, so the query resets each time it opens. */
+function PaletteBody({ onOpenChange }: { onOpenChange: (o: boolean) => void }) {
   const router = useRouter();
   const can = useCan();
   const [q, setQ] = React.useState("");
@@ -27,12 +39,8 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   const { data } = useQuery({
     queryKey: ["search", dq],
     queryFn: () => api.search(dq),
-    enabled: open && dq.length >= 2,
+    enabled: dq.length >= 2,
   });
-
-  React.useEffect(() => {
-    if (!open) setQ("");
-  }, [open]);
 
   const go = (href: string) => {
     onOpenChange(false);
@@ -48,9 +56,6 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   ].filter((a) => can(a.perm) && (!lower || a.label.toLowerCase().includes(lower)));
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="lg" hideClose className="gap-0 overflow-hidden p-0" aria-describedby={undefined}>
-        <DialogTitle className="sr-only">Wyszukiwanie i polecenia</DialogTitle>
         <Command shouldFilter={false} label="Wyszukiwanie i polecenia">
           <CommandInput value={q} onValueChange={setQ} placeholder="Wpisz adres IP, domenę, nazwę znaleziska lub sekcji…" />
           <CommandList>
@@ -111,7 +116,5 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             ) : null}
           </CommandList>
         </Command>
-      </DialogContent>
-    </Dialog>
   );
 }
