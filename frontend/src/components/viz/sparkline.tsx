@@ -65,13 +65,7 @@ export function Sparkline({
         onPointerLeave={() => setHover(null)}
         className="block touch-none"
       >
-        <defs>
-          <linearGradient id="spark-fill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0" stopColor="var(--accent)" stopOpacity="0.22" />
-            <stop offset="1" stopColor="var(--accent)" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <path d={area} fill="url(#spark-fill)" />
+        <path d={area} fill="var(--chrome-ink-2)" fillOpacity="0.08" />
         <path d={d} fill="none" stroke="var(--chrome-ink-2)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
         {hi !== null ? <line x1={x(hi)} x2={x(hi)} y1={0} y2={height} stroke="var(--chrome-ink-2)" strokeOpacity="0.5" strokeWidth="1" /> : null}
         <circle cx={x(last)} cy={y(values[last])} r="4.5" fill="var(--accent)" stroke="var(--chrome-raised)" strokeWidth="2" />

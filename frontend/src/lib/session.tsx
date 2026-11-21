@@ -45,8 +45,8 @@ export function useSwitchUser() {
 }
 
 export const DEMO_USERS = [
-  { login: "jan.kowalski", name: "Jan Kowalski", role: "Administrator", hint: "Administracja — pełny dostęp" },
-  { login: "anna.nowak", name: "Anna Nowak", role: "Operator", hint: "Dodawanie, usuwanie, modyfikacja" },
-  { login: "piotr.wisniewski", name: "Piotr Wiśniewski", role: "Analityk", hint: "Modyfikacja i odczyt" },
-  { login: "maria.wojcik", name: "Maria Wójcik", role: "Obserwator", hint: "Tylko odczyt" },
+  { login: "jan.kowalski", name: "Jan Kowalski", role: "Administrator", hint: "pełny dostęp" },
+  { login: "anna.nowak", name: "Anna Nowak", role: "Operator", hint: "dodawanie, usuwanie, modyfikacja" },
+  { login: "piotr.wisniewski", name: "Piotr Wiśniewski", role: "Analityk", hint: "modyfikacja i odczyt" },
+  { login: "maria.wojcik", name: "Maria Wójcik", role: "Obserwator", hint: "tylko odczyt" },
 ] as const;

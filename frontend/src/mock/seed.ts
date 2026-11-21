@@ -34,7 +34,7 @@ import {
 import type { HostRec, MockDB, ServiceRec } from "@/mock/db";
 import { findingsForHost } from "@/mock/findings";
 import { chance, int, mulberry32, pick, pickWeighted, rngFor, sample, shuffle, type Rng } from "@/mock/rng";
-import { DAY, HOUR, MIN, iso, warsaw, zoned } from "@/mock/time";
+import { DAY, HOUR, MIN, iso, nextScheduleRun, warsaw, zoned } from "@/mock/time";
 
 export const NET_PREFIX = "10.0";
 export const NET_CIDR = "10.0.0.0/16";
@@ -945,13 +945,15 @@ export function createDB(): MockDB {
     { id: "p-4", name: "Ostrożny — urządzenia IoT", description: "Niskie tempo i timing T2 dla drukarek, kamer i BMC.", builtin: false, ports: { preset: "custom", custom: "21-23,80,443,554,623,631,8000,8080,8443,9100" }, rate_limit_rps: 50, max_concurrency: 8, nmap_timing: "T2", host_timeout_s: 300, http_probe: true, tls_probe: true, follow_redirects: true, max_redirects: 2, signatures: "selected", signature_ids: ["sig-b12", "sig-b13", "sig-b14", "sig-c5"], unstable_retries: 2, batch_strategy: "fixed", batch_prefix: 24 },
   ];
   const win = { start: "22:00", end: "06:00", timezone: "Europe/Warsaw" };
-  const nz = zoned(nowDate);
-  const tonight = warsaw(nz.y, nz.mo, nz.d + (nz.h >= 22 ? 1 : 0), 22, 0);
   const schedules: Schedule[] = [
-    { id: "sch-1", name: "Nocny pełny przegląd", enabled: true, target_ids: ["t-1", "t-2", "t-3", "t-4", "t-5", "t-7", "t-8", "t-9", "t-10", "t-11", "t-12", "t-13"], profile_id: "p-1", window: win, days: [1, 2, 3, 4, 5, 6, 7], frequency: "daily", cron: null, on_window_exceeded: "pause_resume", next_run_at: iso(tonight), last_run_id: "scan-128", created_at: tDate(200) },
-    { id: "sch-2", name: "Urządzenia IoT — tygodniowo", enabled: true, target_ids: ["t-4"], profile_id: "p-4", window: { start: "01:00", end: "05:00", timezone: "Europe/Warsaw" }, days: [6], frequency: "weekly", cron: null, on_window_exceeded: "pause_resume", next_run_at: iso(warsaw(nz.y, nz.mo, nz.d + ((6 - nz.dow + 7) % 7 || 7), 1, 0)), last_run_id: null, created_at: tDate(120) },
-    { id: "sch-3", name: "Pomiary kontrolne w dzień (hosty niestabilne)", enabled: true, target_ids: ["t-2", "t-3"], profile_id: "p-2", window: { start: "10:00", end: "16:00", timezone: "Europe/Warsaw" }, days: [1, 2, 3, 4, 5], frequency: "cron", cron: "0 10,13,15 * * 1-5", on_window_exceeded: "stop", next_run_at: iso(warsaw(nz.y, nz.mo, nz.d + 1, 10, 0)), last_run_id: null, created_at: tDate(45) },
+    { id: "sch-1", name: "Nocny pełny przegląd", enabled: true, target_ids: ["t-1", "t-2", "t-3", "t-4", "t-5", "t-7", "t-8", "t-9", "t-10", "t-11", "t-12", "t-13"], profile_id: "p-1", window: win, days: [1, 2, 3, 4, 5, 6, 7], frequency: "daily", cron: null, on_window_exceeded: "pause_resume", next_run_at: null, last_run_id: "scan-128", created_at: tDate(200) },
+    { id: "sch-2", name: "Urządzenia IoT — tygodniowo", enabled: true, target_ids: ["t-4"], profile_id: "p-4", window: { start: "01:00", end: "05:00", timezone: "Europe/Warsaw" }, days: [6], frequency: "weekly", cron: null, on_window_exceeded: "pause_resume", next_run_at: null, last_run_id: null, created_at: tDate(120) },
+    { id: "sch-3", name: "Pomiary kontrolne w dzień (hosty niestabilne)", enabled: true, target_ids: ["t-2", "t-3"], profile_id: "p-2", window: { start: "10:00", end: "16:00", timezone: "Europe/Warsaw" }, days: [1, 2, 3, 4, 5], frequency: "cron", cron: "0 10,13,15 * * 1-5", on_window_exceeded: "stop", next_run_at: null, last_run_id: null, created_at: tDate(45) },
   ];
+  for (const s of schedules) {
+    const next = nextScheduleRun(s, nowDate);
+    s.next_run_at = next ? iso(next) : null;
+  }
 
   /* ---------------- scans history, timeline, trend ---------------- */
   const scans: ScanRun[] = [];

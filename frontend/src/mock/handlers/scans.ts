@@ -17,7 +17,7 @@ import { blockType } from "@/mock/catalog";
 import type { RouteFn } from "@/mock/router";
 import { scanRef } from "@/mock/serialize";
 import { addressSpan, batchesFor, cancelSim, logsFor, pauseSim, refreshScan, resumeSim, startSim } from "@/mock/sim";
-import { iso, nextWindowStart, parseHM, windowAround } from "@/mock/time";
+import { iso, nextScheduleRun, nextWindowStart, parseHM, windowAround } from "@/mock/time";
 import { apiError, audit, badRequest, file, json, list, matchesText, notFound, paginate, toCsv } from "@/mock/util";
 import { liveScans } from "@/mock/handlers/core";
 
@@ -440,6 +440,7 @@ export function scanRoutes(route: RouteFn) {
   });
 
   /* ---------------- schedules ---------------- */
+  const CRON_INVALID = "Wyrażenie cron jest niepoprawne albo nie wypada w ciągu najbliższego roku.";
   const validateSchedule = (body: Partial<ScheduleInput>) => {
     if (body.window && (!/^\d{2}:\d{2}$/.test(body.window.start) || !/^\d{2}:\d{2}$/.test(body.window.end)))
       return "Okno musi mieć format GG:MM.";
@@ -453,7 +454,9 @@ export function scanRoutes(route: RouteFn) {
     const err = validateSchedule(body) ?? (!body.name?.trim() ? "Podaj nazwę harmonogramu." : null);
     if (err) return badRequest(err);
     const now = new Date();
-    const s: Schedule = { ...body, id: nextId(ctx.db, "sch"), next_run_at: iso(nextWindowStart(now, body.window.start, body.window.end)), last_run_id: null, created_at: iso(now) };
+    const next = nextScheduleRun(body, now);
+    if (body.frequency === "cron" && !next) return badRequest(CRON_INVALID, { cron: CRON_INVALID });
+    const s: Schedule = { ...body, id: nextId(ctx.db, "sch"), next_run_at: body.enabled && next ? iso(next) : null, last_run_id: null, created_at: iso(now) };
     ctx.db.schedules.push(s);
     audit(ctx.db, ctx.user, "create", "schedule", s.name, "Utworzono harmonogram", [], s.id);
     return json(s, { status: 201 });
@@ -464,9 +467,12 @@ export function scanRoutes(route: RouteFn) {
     const body = await ctx.body<Partial<ScheduleInput>>();
     const err = validateSchedule(body);
     if (err) return badRequest(err);
+    const merged = { ...s, ...body };
+    const next = nextScheduleRun(merged, new Date());
+    if (merged.frequency === "cron" && !next) return badRequest(CRON_INVALID, { cron: CRON_INVALID });
     const before = { enabled: s.enabled, window: `${s.window.start}–${s.window.end}` };
     Object.assign(s, body, { id: s.id });
-    s.next_run_at = s.enabled ? iso(nextWindowStart(new Date(), s.window.start, s.window.end)) : null;
+    s.next_run_at = s.enabled && next ? iso(next) : null;
     audit(ctx.db, ctx.user, "update", "schedule", s.name, "Edytowano harmonogram", [
       ...(before.enabled !== s.enabled ? [{ field: "enabled", label: "Aktywny", before: before.enabled ? "tak" : "nie", after: s.enabled ? "tak" : "nie" }] : []),
       ...(before.window !== `${s.window.start}–${s.window.end}` ? [{ field: "window", label: "Okno", before: before.window, after: `${s.window.start}–${s.window.end}` }] : []),

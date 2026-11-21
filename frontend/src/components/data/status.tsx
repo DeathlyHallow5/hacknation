@@ -1,30 +1,43 @@
 import {
   ArrowUpRight,
+  Circle,
+  CircleAlert,
   CircleCheck,
+  CircleDashed,
   CircleDot,
   CircleMinus,
   CirclePause,
+  CircleSlash,
   CircleX,
   Clock,
   Loader,
   Pencil,
   Plus,
+  ShieldCheck,
   TriangleAlert,
   Waves,
+  type LucideIcon,
 } from "lucide-react";
 import type { Availability, ChangeState, FindingStatus, ScanStatus } from "@/lib/api/types";
+import { countLabel } from "@/lib/format";
 import { AVAILABILITY_LABEL, CHANGE_LABEL, FINDING_STATUS_LABEL, SCAN_STATUS_LABEL } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 
+/*
+ * Status vocabulary. A status is always icon + text, never colour alone.
+ * Only states that need attention get a filled chip; the normal state ("Zakończony",
+ * "Do analizy", "Bez zmian") is quiet text with the same icon slot.
+ */
 const chip =
-  "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-bold whitespace-nowrap [&_svg]:size-3.5 [&_svg]:shrink-0 contrast:border contrast:border-current";
+  "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-semibold whitespace-nowrap [&_svg]:size-3.5 [&_svg]:shrink-0 contrast:border contrast:border-current";
+const quiet = "inline-flex items-center gap-1 text-sm whitespace-nowrap text-ink-2 [&_svg]:size-3.5 [&_svg]:shrink-0";
 
 const CHANGE_STYLE: Record<ChangeState, string> = {
-  new: "bg-new-soft text-new-ink",
-  changed: "bg-changed-soft text-changed-ink",
-  gone: "bg-gone-soft text-gone-ink",
-  unstable: "bg-unstable-soft text-unstable-ink",
-  unchanged: "bg-surface-3 text-ink-2",
+  new: cn(chip, "bg-new-soft text-new-ink"),
+  changed: cn(chip, "bg-changed-soft text-changed-ink"),
+  gone: cn(chip, "bg-gone-soft text-gone-ink"),
+  unstable: cn(chip, "bg-unstable-soft text-unstable-ink"),
+  unchanged: quiet,
 };
 
 const CHANGE_ICON = {
@@ -47,11 +60,11 @@ export function ChangeChip({
 }) {
   const Icon = CHANGE_ICON[state];
   return (
-    <span className={cn(chip, CHANGE_STYLE[state], className)}>
+    <span className={cn(CHANGE_STYLE[state], className)}>
       <Icon aria-hidden strokeWidth={2.6} />
       {CHANGE_LABEL[state]}
       {state === "unstable" && measurements ? (
-        <span className="font-semibold opacity-80">
+        <span className="font-normal">
           ({measurements.responded}/{measurements.total})
         </span>
       ) : null}
@@ -59,38 +72,45 @@ export function ChangeChip({
   );
 }
 
-const AVAIL_STYLE: Record<Availability, string> = {
-  active: "text-new-ink",
-  unstable: "text-unstable-ink",
-  inactive: "text-inactive-ink",
-};
-
+/** Host availability: a dot as the icon. "Aktywny" uses the map's blue, not the green of "Nowy". */
 export function AvailabilityBadge({ value, missCount, className }: { value: Availability; missCount?: number; className?: string }) {
   return (
-    <span className={cn("inline-flex items-center gap-1.5 text-[0.8125rem] font-semibold whitespace-nowrap", AVAIL_STYLE[value], className)}>
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 text-sm whitespace-nowrap",
+        value === "active" ? "text-ink" : value === "unstable" ? "text-unstable-ink" : "text-ink-2",
+        className,
+      )}
+    >
       <span
         aria-hidden
         className={cn(
-          "size-2 rounded-full",
-          value === "active" ? "bg-new" : value === "unstable" ? "bg-unstable" : "border-[1.5px] border-inactive bg-transparent",
+          "size-2 shrink-0 rounded-full",
+          value === "active" ? "bg-active" : value === "unstable" ? "bg-unstable" : "border-[1.5px] border-inactive bg-transparent",
         )}
       />
       {AVAILABILITY_LABEL[value]}
-      {value === "inactive" && missCount ? <span className="font-normal text-ink-2">({missCount} skanów bez odpowiedzi)</span> : null}
+      {value === "inactive" && missCount ? <span className="text-ink-2">({countLabel(missCount, ["skan", "skany", "skanów"])} bez odpowiedzi)</span> : null}
     </span>
   );
 }
 
-const FS_STYLE: Record<FindingStatus, string> = {
-  open: "border border-line-strong text-ink",
-  in_review: "bg-accent/12 text-link",
-  confirmed: "bg-gone-soft text-gone-ink",
-  false_positive: "bg-surface-3 text-ink-2 line-through decoration-1",
-  accepted: "bg-surface-3 text-ink-2",
+const FS: Record<FindingStatus, { icon: LucideIcon; cls: string }> = {
+  open: { icon: Circle, cls: quiet },
+  in_review: { icon: CircleDashed, cls: cn(chip, "bg-surface-3 text-ink") },
+  confirmed: { icon: CircleAlert, cls: cn(chip, "bg-danger-soft text-danger") },
+  false_positive: { icon: CircleSlash, cls: cn(quiet, "[&>span]:line-through [&>span]:decoration-1") },
+  accepted: { icon: ShieldCheck, cls: quiet },
 };
 
 export function FindingStatusChip({ value, className }: { value: FindingStatus; className?: string }) {
-  return <span className={cn(chip, "font-semibold", FS_STYLE[value], className)}>{FINDING_STATUS_LABEL[value]}</span>;
+  const { icon: Icon, cls } = FS[value];
+  return (
+    <span className={cn(cls, className)}>
+      <Icon aria-hidden />
+      <span>{FINDING_STATUS_LABEL[value]}</span>
+    </span>
+  );
 }
 
 const SCAN_ICON = {
@@ -104,36 +124,39 @@ const SCAN_ICON = {
 } as const;
 
 const SCAN_STYLE: Record<ScanStatus, string> = {
-  queued: "bg-surface-3 text-ink-2",
-  running: "bg-accent/14 text-link",
-  paused: "bg-unstable-soft text-unstable-ink",
-  paused_window: "bg-unstable-soft text-unstable-ink",
-  completed: "bg-new-soft text-new-ink",
-  cancelled: "bg-surface-3 text-ink-2",
-  failed: "bg-gone-soft text-gone-ink",
+  queued: quiet,
+  running: cn(chip, "bg-accent/14 text-link"),
+  paused: cn(chip, "bg-unstable-soft text-unstable-ink"),
+  paused_window: cn(chip, "bg-unstable-soft text-unstable-ink"),
+  completed: quiet,
+  cancelled: quiet,
+  failed: cn(chip, "bg-danger-soft text-danger"),
 };
 
 export function ScanStatusChip({ value, className }: { value: ScanStatus; className?: string }) {
   const Icon = SCAN_ICON[value];
   return (
-    <span className={cn(chip, SCAN_STYLE[value], className)}>
+    <span className={cn(SCAN_STYLE[value], className)}>
       <Icon aria-hidden className={value === "running" ? "animate-spin [animation-duration:2.4s]" : undefined} />
       {SCAN_STATUS_LABEL[value]}
     </span>
   );
 }
 
-/** Analytical priority 0..100 — monochrome meter + number. */
+/** Analytical priority 0..100: monochrome meter + number. */
 export function ScoreMeter({ score, overridden, className }: { score: number; overridden?: boolean; className?: string }) {
   const level = score >= 70 ? "Wysoki" : score >= 40 ? "Średni" : "Niski";
   return (
     <span className={cn("inline-flex items-center gap-2", className)} title={`Priorytet ${score}/100 (${level.toLowerCase()})${overridden ? ", ustawiony ręcznie" : ""}`}>
-      <span className="tabular w-7 text-right text-sm font-bold text-ink">{score}</span>
+      <span className="tabular w-7 text-right text-sm font-semibold text-ink">{score}</span>
       <span className="flex gap-[2px]" aria-hidden>
         {[0, 1, 2, 3, 4].map((i) => (
           <span
             key={i}
-            className={cn("h-3 w-[5px] rounded-[1.5px]", score >= (i + 1) * 20 - 10 ? "bg-ink" : "bg-line-strong")}
+            className={cn(
+              "h-3 w-[5px] rounded-[1.5px]",
+              score >= (i + 1) * 20 - 10 ? "bg-ink" : "bg-line-strong contrast:bg-transparent contrast:ring-1 contrast:ring-white contrast:ring-inset",
+            )}
           />
         ))}
       </span>
@@ -148,17 +171,19 @@ export function ConfidenceMeter({
   value,
   measurements,
   className,
+  valueClassName,
   compact,
 }: {
   value: number;
   measurements?: { responded: number; total: number };
   className?: string;
+  valueClassName?: string;
   compact?: boolean;
 }) {
   const pct = Math.round(value * 100);
   return (
     <span className={cn("inline-flex items-center gap-2", className)}>
-      <span className="tabular w-9 text-right text-sm font-semibold text-ink">{pct}%</span>
+      <span className={cn("tabular text-right text-sm text-ink", !compact && "w-9", valueClassName)}>{pct}%</span>
       {!compact ? (
         <span className="relative h-1.5 w-14 overflow-hidden rounded-full bg-surface-3" aria-hidden>
           <span className="absolute inset-y-0 left-0 rounded-full bg-ink-2" style={{ width: `${pct}%` }} />
@@ -173,7 +198,7 @@ export function ConfidenceMeter({
   );
 }
 
-/** Sparkline of the last N measurements: filled = responded. */
+/** Last N measurements: filled = responded. Show it only when there is a miss to see. */
 export function ResponsePattern({ pattern, className }: { pattern: boolean[]; className?: string }) {
   const responded = pattern.filter(Boolean).length;
   return (
@@ -192,10 +217,5 @@ export function ResponsePattern({ pattern, className }: { pattern: boolean[]; cl
 
 export function TrendArrow({ delta, className }: { delta: number; className?: string }) {
   if (delta === 0) return null;
-  return (
-    <ArrowUpRight
-      aria-hidden
-      className={cn("size-3.5", delta < 0 && "rotate-90", className)}
-    />
-  );
+  return <ArrowUpRight aria-hidden className={cn("size-3.5", delta < 0 && "rotate-90", className)} />;
 }

@@ -123,7 +123,7 @@ export function FindingsTable({
       key: "service",
       header: "Port / usługa",
       hideBelow: "md",
-      cell: (f) => <span className="mono text-[0.8125rem] whitespace-nowrap text-ink">{f.service_label ?? "—"}</span>,
+      cell: (f) => <span className="mono text-sm whitespace-nowrap text-ink">{f.service_label ?? "—"}</span>,
     },
     {
       key: "what",

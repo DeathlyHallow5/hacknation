@@ -25,7 +25,18 @@ export interface ImportWizardProps {
 }
 
 /** Drag & drop CSV/JSON import with server-side validation preview. */
-export function ImportWizard({ open, onOpenChange, title, description, samples, formatHint, preview, commit, conflictOption }: ImportWizardProps) {
+export function ImportWizard(props: ImportWizardProps) {
+  return (
+    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      <DialogContent size="xl">
+        <ImportBody {...props} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Mounted only while the dialog is open, so its state starts fresh every time. */
+function ImportBody({ onOpenChange, title, description, samples, formatHint, preview, commit, conflictOption }: ImportWizardProps) {
   const [file, setFile] = React.useState<File | null>(null);
   const [drag, setDrag] = React.useState(false);
   const [report, setReport] = React.useState<ImportReport | null>(null);
@@ -34,32 +45,19 @@ export function ImportWizard({ open, onOpenChange, title, description, samples, 
   const [onConflict, setOnConflict] = React.useState<"skip" | "update">("skip");
   const inputRef = React.useRef<HTMLInputElement>(null);
 
-  React.useEffect(() => {
-    if (!open) {
-      setFile(null);
-      setReport(null);
-      setError(null);
-      setBusy(null);
-    }
-  }, [open]);
-
-  const makeForm = (dryRun: boolean, f: File) => {
+  const makeForm = (dryRun: boolean, f: File, policy = onConflict) => {
     const fd = new FormData();
     fd.set("file", f);
     fd.set("dry_run", String(dryRun));
-    fd.set("on_conflict", onConflict);
+    fd.set("on_conflict", policy);
     return fd;
   };
 
-  const pick = async (f: File | undefined | null) => {
-    if (!f) return;
-    setFile(f);
-    setReport(null);
-    setError(null);
+  const runPreview = async (f: File, policy = onConflict) => {
     if (!preview) return;
     setBusy("preview");
     try {
-      setReport(await preview(makeForm(true, f)));
+      setReport(await preview(makeForm(true, f, policy)));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -67,11 +65,18 @@ export function ImportWizard({ open, onOpenChange, title, description, samples, 
     }
   };
 
-  React.useEffect(() => {
-    if (file && preview && open) void pick(file);
-    // re-run preview when the conflict policy changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onConflict]);
+  const pick = async (f: File | undefined | null) => {
+    if (!f) return;
+    setFile(f);
+    setReport(null);
+    setError(null);
+    await runPreview(f);
+  };
+
+  const changePolicy = (policy: "skip" | "update") => {
+    setOnConflict(policy);
+    if (file) void runPreview(file, policy);
+  };
 
   const doCommit = async () => {
     if (!file) return;
@@ -89,8 +94,7 @@ export function ImportWizard({ open, onOpenChange, title, description, samples, 
   const isJson = file?.name.toLowerCase().endsWith(".json");
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="xl">
+    <>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -117,7 +121,7 @@ export function ImportWizard({ open, onOpenChange, title, description, samples, 
               {isJson ? <FileJson className="size-8 text-link" aria-hidden /> : <FileSpreadsheet className="size-8 text-link" aria-hidden />}
               <div className="grid text-left">
                 <span className="font-semibold">{file.name}</span>
-                <span className="text-[0.8125rem] text-ink-2">{fmtBytes(file.size)}</span>
+                <span className="text-sm text-ink-2">{fmtBytes(file.size)}</span>
               </div>
               <Button size="sm" variant="ghost" onClick={() => inputRef.current?.click()}>
                 Zmień plik
@@ -132,14 +136,14 @@ export function ImportWizard({ open, onOpenChange, title, description, samples, 
                   wybierz z dysku
                 </button>
               </p>
-              <p className="text-[0.8125rem] text-ink-2">{formatHint}</p>
+              <p className="text-sm text-ink-2">{formatHint}</p>
             </>
           )}
           <input ref={inputRef} type="file" accept=".csv,.json,text/csv,application/json" className="sr-only" onChange={(e) => pick(e.target.files?.[0])} />
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2 text-[0.8125rem] text-ink-2">
+          <div className="flex flex-wrap items-center gap-2 text-sm text-ink-2">
             Przykładowe pliki:
             {samples.map((s) => (
               <a key={s.href} href={s.href} download className="inline-flex items-center gap-1 font-semibold text-link hover:underline">
@@ -148,13 +152,13 @@ export function ImportWizard({ open, onOpenChange, title, description, samples, 
             ))}
           </div>
           {conflictOption ? (
-            <label className="flex items-center gap-2 text-[0.8125rem]">
+            <label className="flex items-center gap-2 text-sm">
               <span className="text-ink-2">Gdy cel już istnieje</span>
               <Segmented
                 size="sm"
                 aria-label="Postępowanie z duplikatami"
                 value={onConflict}
-                onChange={setOnConflict}
+                onChange={changePolicy}
                 options={[
                   { value: "skip", label: "Pomiń" },
                   { value: "update", label: "Zaktualizuj" },
@@ -185,9 +189,9 @@ export function ImportWizard({ open, onOpenChange, title, description, samples, 
               {report.invalid ? <Chip tone="danger">{fmtNumber(report.invalid)} błędnych</Chip> : null}
               <Chip tone="outline">{report.format.toUpperCase()}, {fmtNumber(report.total_rows)} wierszy</Chip>
             </div>
-            <div className="scroll-quiet max-h-64 overflow-auto rounded-lg border border-line">
+            <div className="scroll-quiet relative max-h-64 overflow-auto rounded-lg border border-line">
               <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-surface-2 text-left text-[0.8125rem] text-ink-2">
+                <thead className="sticky top-0 bg-surface-2 text-left text-sm text-ink-2">
                   <tr>
                     <th className="w-16 px-3 py-2 font-semibold">Wiersz</th>
                     <th className="px-3 py-2 font-semibold">Wartość</th>
@@ -200,7 +204,7 @@ export function ImportWizard({ open, onOpenChange, title, description, samples, 
                       <td className="tabular px-3 py-1.5 text-ink-2">{r.row}</td>
                       <td className="mono px-3 py-1.5">{r.value || "—"}</td>
                       <td className="px-3 py-1.5">
-                        <span className={cn("inline-flex items-center gap-1.5 text-[0.8125rem]", r.status === "ok" ? "text-success" : r.status === "duplicate" ? "text-unstable-ink" : "text-danger")}>
+                        <span className={cn("inline-flex items-center gap-1.5 text-sm", r.status === "ok" ? "text-success" : r.status === "duplicate" ? "text-unstable-ink" : "text-danger")}>
                           {r.status === "ok" ? <CircleCheck className="size-3.5" aria-hidden /> : <CircleX className="size-3.5" aria-hidden />}
                           {r.status === "ok" ? `OK${r.address_count && r.address_count > 1 ? `, ${fmtNumber(r.address_count)} adresów` : ""}` : r.error}
                         </span>
@@ -221,7 +225,6 @@ export function ImportWizard({ open, onOpenChange, title, description, samples, 
             {busy === "commit" ? <Spinner /> : <FileUp />} Importuj
           </Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </>
   );
 }

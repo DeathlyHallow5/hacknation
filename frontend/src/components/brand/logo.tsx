@@ -22,9 +22,9 @@ export function Wordmark({ className, compact }: { className?: string; compact?:
     <span className={cn("flex items-center gap-2.5", className)}>
       <LogoMark className="text-chrome-ink" />
       <span className="flex items-baseline gap-2.5 leading-none">
-        <span className="text-[1.0625rem] font-extrabold tracking-tight text-chrome-ink">CBI AGH</span>
+        <span className="text-[1.0625rem] font-extrabold tracking-tight text-chrome-ink max-[359px]:sr-only">CBI AGH</span>
         {!compact ? (
-          <span className="hidden border-l border-chrome-line pl-2.5 text-[0.8125rem] font-semibold text-chrome-ink-2 sm:inline">
+          <span className="hidden border-l border-chrome-line pl-2.5 text-sm font-semibold text-chrome-ink-2 sm:inline">
             Attack Surface Intelligence
           </span>
         ) : null}
