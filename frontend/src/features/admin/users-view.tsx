@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, UserRoundX } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { ErrorState, Guard } from "@/components/data/bits";
@@ -9,7 +9,7 @@ import { DataTable, type Column } from "@/components/data/data-table";
 import { Container, PageHeader } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Switch } from "@/components/ui/form-controls";
-import { Chip, Panel } from "@/components/ui/misc";
+import { Panel } from "@/components/ui/misc";
 import { ConfirmDialog, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/overlays";
 import { SimpleSelect } from "@/components/ui/select";
 import { ApiError, errorMessage } from "@/lib/api/client";
@@ -108,20 +108,24 @@ export function UsersView() {
       cell: (u) => (
         <div className="grid gap-0.5">
           <span className="font-semibold">
-            {u.name} {u.id === session.user.id ? <Chip tone="accent">to Ty</Chip> : null}
+            {u.name} {u.id === session.user.id ? <span className="font-normal text-ink-2">(Ty)</span> : null}
+            {!u.active ? <span className="font-normal text-ink-2"> (konto zablokowane)</span> : null}
           </span>
-          <span className="text-xs text-ink-2">
+          <span className="text-xs text-ink-2 [overflow-wrap:anywhere]">
             {u.login}, {u.email}
           </span>
+          <span className="text-xs text-ink-2 sm:hidden">Rola: {u.role_name}</span>
         </div>
       ),
     },
     {
       key: "role",
       header: "Rola",
+      hideBelow: "sm",
       cell: (u) =>
         can("users:manage") && u.id !== session.user.id ? (
           <SimpleSelect
+            quiet
             aria-label={`Rola: ${u.name}`}
             className="h-8 w-48 text-sm"
             value={u.role_id}
@@ -129,13 +133,14 @@ export function UsersView() {
             options={(roles.data ?? []).map((r) => ({ value: r.id, label: r.name }))}
           />
         ) : (
-          <Chip tone="outline">{u.role_name}</Chip>
+          <span className="text-sm">{u.role_name}</span>
         ),
     },
-    { key: "login", header: "Ostatnie logowanie", hideBelow: "md", cell: (u) => <span className="text-sm text-ink-2">{u.last_login_at ? fmtRelative(u.last_login_at) : "nigdy"}</span> },
+    { key: "login", header: "Ostatnie logowanie", hideBelow: "lg", cell: (u) => <span className="text-sm whitespace-nowrap text-ink-2">{u.last_login_at ? fmtRelative(u.last_login_at) : "nigdy"}</span> },
     {
       key: "active",
       header: "Konto aktywne",
+      hideBelow: "sm",
       cell: (u) => (
         <Switch
           aria-label={`Konto aktywne: ${u.name}`}
@@ -165,7 +170,7 @@ export function UsersView() {
     <Container className="pb-12">
       <PageHeader
         title="Użytkownicy"
-        description="Konta z dostępem do systemu i ich role. Zmiana roli działa od następnego żądania użytkownika."
+        description="Zmiana roli działa od następnego żądania użytkownika."
         actions={
           <Guard permission="users:manage">
             <Button variant="primary" onClick={() => setNewOpen(true)}>
@@ -176,7 +181,7 @@ export function UsersView() {
       />
       <Panel flush>
         {users.isError ? <ErrorState className="m-4" error={users.error} onRetry={() => users.refetch()} /> : null}
-        <DataTable columns={columns} rows={users.data} getId={(u) => u.id} loading={users.isFetching && !users.data} rowClassName={(u) => (!u.active ? "opacity-60" : undefined)} caption="Użytkownicy" />
+        <DataTable columns={columns} rows={users.data} getId={(u) => u.id} loading={users.isFetching && !users.data} caption="Użytkownicy" />
       </Panel>
       <NewUserDialog open={newOpen} onOpenChange={setNewOpen} />
       <ConfirmDialog
@@ -185,7 +190,7 @@ export function UsersView() {
         title={`Usunąć konto ${toDelete?.name}?`}
         description={
           <>
-            <UserRoundX className="mr-1 inline size-4" aria-hidden /> Historia działań w dzienniku zdarzeń zostanie zachowana. Zamiast usuwać, możesz zablokować konto. Tej operacji nie można cofnąć.
+            Historia działań w dzienniku zdarzeń zostanie zachowana. Zamiast usuwać, możesz zablokować konto. Tej operacji nie można cofnąć.
           </>
         }
         confirmLabel="Usuń konto"

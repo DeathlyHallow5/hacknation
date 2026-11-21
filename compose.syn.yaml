@@ -4,6 +4,7 @@
 # isolation: NET_RAW is granted and no-new-privileges is off so the file capability of
 # /opt/asi-tools/naabu-raw (and only that binary) takes effect. The core still runs as a
 # non-root user with every other capability dropped. See docs/BENCHMARK.md.
+# EXPERIMENTAL: the first benchmark missed open ports on 17 of 66 hosts — not for real scans yet.
 services:
   core:
     cap_add:

@@ -17,10 +17,8 @@ export function Require({ permission, children }: { permission: Permission; chil
   return (
     <Container className="grid place-items-center py-20">
       <div className="grid max-w-md justify-items-center gap-3 text-center">
-        <span className="grid size-12 place-items-center rounded-full bg-surface-3 text-ink-2">
-          <LockKeyhole className="size-6" aria-hidden />
-        </span>
-        <h1 className="text-xl font-extrabold">Brak dostępu do tej sekcji</h1>
+        <LockKeyhole className="size-6 text-ink-2" aria-hidden />
+        <h1 className="text-xl font-semibold">Brak dostępu do tej sekcji</h1>
         <p className="text-sm text-ink-2">
           Twoja rola ({session.role.name}) nie ma uprawnienia „{permissionLabel(permission)}”. Jeśli potrzebujesz dostępu, poproś administratora o zmianę roli.
         </p>

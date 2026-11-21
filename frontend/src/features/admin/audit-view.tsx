@@ -3,10 +3,10 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
 import * as React from "react";
-import { EmptyState, ErrorState, SearchInput, useDebouncedValue } from "@/components/data/bits";
+import { EmptyState, ErrorState, ResourceLabel, SearchInput, useDebouncedValue } from "@/components/data/bits";
 import { Pagination } from "@/components/data/data-table";
 import { Container, PageHeader } from "@/components/layout/page";
-import { Chip, Panel, Skeleton } from "@/components/ui/misc";
+import { Panel, Skeleton } from "@/components/ui/misc";
 import { SimpleSelect } from "@/components/ui/select";
 import { FieldDiff } from "@/components/viz/bits";
 import { api } from "@/lib/api/endpoints";
@@ -45,16 +45,13 @@ export function AuditView() {
   });
   return (
     <Container className="pb-12">
-      <PageHeader
-        title="Dziennik zdarzeń"
-        description="Każda zmiana danych, eksport, logowanie i działanie skanera — kto, co i kiedy. Wpisy są tylko do odczytu."
-      />
+      <PageHeader title="Dziennik zdarzeń" description="Wpisów nie można edytować ani usuwać." />
       <Panel flush>
-        <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
-          <SearchInput value={q} onChange={(v) => { setQ(v); setPage(1); }} placeholder="Szukaj w opisie, zasobie, osobie…" className="w-full sm:w-80" />
-          <SimpleSelect aria-label="Osoba" className="w-52" value={actor} onChange={(v) => { setActor(v); setPage(1); }} allLabel="Każda osoba" options={[{ value: "system", label: "System / harmonogram" }, ...(users.data ?? []).map((u) => ({ value: u.id, label: u.name }))]} />
-          <SimpleSelect aria-label="Działanie" className="w-52" value={action} onChange={(v) => { setAction(v as AuditAction | ""); setPage(1); }} allLabel="Każde działanie" options={(Object.keys(AUDIT_ACTION_LABEL) as AuditAction[]).map((a) => ({ value: a, label: AUDIT_ACTION_LABEL[a] }))} />
-          <SimpleSelect aria-label="Zasób" className="w-44" value={resource} onChange={(v) => { setResource(v); setPage(1); }} allLabel="Każdy zasób" options={RESOURCES} />
+        <div className="grid grid-cols-2 gap-2 border-b border-line px-5 py-3 sm:flex sm:flex-wrap sm:items-center">
+          <SearchInput value={q} onChange={(v) => { setQ(v); setPage(1); }} placeholder="Szukaj w opisie, zasobie, osobie…" className="col-span-2 sm:w-80" />
+          <SimpleSelect aria-label="Osoba" className="w-full sm:w-52" value={actor} onChange={(v) => { setActor(v); setPage(1); }} allLabel="Każda osoba" options={[{ value: "system", label: "System / harmonogram" }, ...(users.data ?? []).map((u) => ({ value: u.id, label: u.name }))]} />
+          <SimpleSelect aria-label="Działanie" className="w-full sm:w-52" value={action} onChange={(v) => { setAction(v as AuditAction | ""); setPage(1); }} allLabel="Każde działanie" options={(Object.keys(AUDIT_ACTION_LABEL) as AuditAction[]).map((a) => ({ value: a, label: AUDIT_ACTION_LABEL[a] }))} />
+          <SimpleSelect aria-label="Zasób" className="w-full sm:w-44" value={resource} onChange={(v) => { setResource(v); setPage(1); }} allLabel="Każdy zasób" options={RESOURCES} />
         </div>
         {query.isError ? <ErrorState className="m-4" error={query.error} onRetry={() => query.refetch()} /> : null}
         <ol className={cn("divide-y divide-line", query.isFetching && "opacity-70")}>
@@ -62,9 +59,10 @@ export function AuditView() {
             const expanded = open.has(e.id);
             return (
               <li key={e.id} className="px-5 py-3">
+                {/* A log reads by time: absolute timestamp first (relative one on hover), then what happened, then who. */}
                 <button
                   type="button"
-                  className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-3 text-left"
+                  className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1 text-left sm:grid-cols-[10rem_minmax(0,1fr)_auto]"
                   aria-expanded={e.changes.length ? expanded : undefined}
                   onClick={() =>
                     e.changes.length &&
@@ -76,24 +74,27 @@ export function AuditView() {
                     })
                   }
                 >
-                  <span className="grid gap-1">
-                    <span className="flex flex-wrap items-center gap-2 text-sm">
-                      <Chip tone="outline">{AUDIT_ACTION_LABEL[e.action]}</Chip>
-                      <span className="font-semibold">{e.actor.name}</span>
-                      <span className="text-ink-2">({e.actor.role})</span>
+                  <time dateTime={e.at} title={fmtRelative(e.at)} className="tabular col-span-2 pt-px text-sm text-ink-2 sm:col-span-1">
+                    {fmtDateTime(e.at)}
+                  </time>
+                  <span className="grid min-w-0 gap-0.5">
+                    <span className="text-sm text-pretty text-ink">
+                      {e.summary}
+                      {e.resource_label && !e.summary.includes(e.resource_label) ? (
+                        <>
+                          {" "}
+                          <ResourceLabel label={e.resource_label} />
+                        </>
+                      ) : null}
                     </span>
-                    <span className="text-sm text-ink">{e.summary}</span>
-                    {e.resource_label ? <span className="mono text-xs text-ink-2">{e.resource_label}</span> : null}
+                    <span className="text-xs text-ink-2">
+                      {e.actor.name} ({e.actor.role}), {AUDIT_ACTION_LABEL[e.action].toLowerCase()}
+                    </span>
                   </span>
-                  <span className="flex items-center gap-2 text-xs whitespace-nowrap text-ink-2">
-                    <time dateTime={e.at} title={fmtDateTime(e.at)}>
-                      {fmtRelative(e.at)}
-                    </time>
-                    {e.changes.length ? <ChevronDown className={cn("size-4 transition-transform", expanded && "rotate-180")} aria-hidden /> : null}
-                  </span>
+                  <span className="pt-0.5 text-ink-2">{e.changes.length ? <ChevronDown className={cn("size-4 transition-transform", expanded && "rotate-180")} aria-hidden /> : null}</span>
                 </button>
                 {expanded ? (
-                  <div className="mt-3 rounded-lg bg-surface-2 p-3">
+                  <div className="mt-3 rounded-lg bg-surface-2 p-3 sm:ml-[calc(10rem+1rem)]">
                     <FieldDiff fields={e.changes} />
                   </div>
                 ) : null}
@@ -108,7 +109,7 @@ export function AuditView() {
             <Skeleton className="h-12" />
           </div>
         ) : null}
-        {query.data && !query.data.items.length ? <EmptyState title="Brak wpisów dla wybranych filtrów" /> : null}
+        {query.data && !query.data.items.length ? <EmptyState title="Brak wpisów dla tych filtrów." /> : null}
         {query.data ? <Pagination page={page} pageSize={30} total={query.data.total} onPage={setPage} /> : null}
       </Panel>
     </Container>

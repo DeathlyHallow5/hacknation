@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { CalendarClock, Check, CircleCheck, FlaskConical, Play, ShieldCheck, TriangleAlert, Zap } from "lucide-react";
+import { Check, CircleCheck, Play, TriangleAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import * as React from "react";
 import { toast } from "sonner";
@@ -9,40 +9,46 @@ import { Guard, SearchInput } from "@/components/data/bits";
 import { Container, PageHeader } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Checkbox, Field, Input, RadioCards, Segmented, Slider } from "@/components/ui/form-controls";
-import { Chip, Panel, Skeleton, Spinner } from "@/components/ui/misc";
+import { Panel, Skeleton, Spinner } from "@/components/ui/misc";
 import { errorMessage } from "@/lib/api/client";
 import { api } from "@/lib/api/endpoints";
 import type { ScanCreateRequest } from "@/lib/api/types";
-import { fmtDate, fmtDuration, fmtNumber } from "@/lib/format";
+import { countLabel, fmtDate, fmtDuration, fmtNumber } from "@/lib/format";
 import { CRITICALITY_LABEL, TARGET_TYPE_LABEL } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 
 const STEPS = ["Cele", "Profil i bezpieczeństwo", "Termin", "Podsumowanie"];
 
+/** Wizard steps as a row of numbered labels; the current one is semibold and underlined in the action colour. */
 function Stepper({ step, onStep, maxStep }: { step: number; onStep: (s: number) => void; maxStep: number }) {
   return (
-    <ol className="flex flex-wrap items-center gap-2" aria-label="Kroki kreatora">
+    <ol className="flex flex-wrap items-center gap-x-7 gap-y-1 border-b border-line" aria-label="Kroki kreatora">
       {STEPS.map((label, i) => {
         const done = i < step;
         const current = i === step;
         return (
-          <li key={label} className="flex items-center gap-2">
+          <li key={label}>
             <button
               type="button"
               disabled={i > maxStep}
               onClick={() => onStep(i)}
               aria-current={current ? "step" : undefined}
               className={cn(
-                "flex items-center gap-2 rounded-full border py-1.5 pr-3.5 pl-1.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-                current ? "border-accent bg-accent/10 text-ink" : done ? "border-line-strong bg-surface text-ink" : "border-line bg-surface text-ink-2",
+                "-mb-px flex items-center gap-2 border-b-2 py-2.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                current ? "border-accent font-semibold text-ink" : "border-transparent text-ink-2 hover:text-ink",
               )}
             >
-              <span className={cn("grid size-6 place-items-center rounded-full text-xs font-extrabold", current ? "bg-accent text-accent-ink" : done ? "bg-ink text-surface" : "bg-surface-3 text-ink-2")}>
-                {done ? <Check className="size-3.5" strokeWidth={3} /> : i + 1}
+              <span
+                className={cn(
+                  "tabular grid size-6 place-items-center rounded-full border text-xs font-semibold",
+                  current ? "border-ink bg-ink text-surface" : done ? "border-ink-2 text-ink" : "border-line-strong text-ink-2",
+                )}
+              >
+                {done ? <Check className="size-3.5" strokeWidth={3} aria-hidden /> : i + 1}
               </span>
               {label}
+              {done ? <span className="sr-only">(ukończony)</span> : null}
             </button>
-            {i < STEPS.length - 1 ? <span className="hidden h-px w-6 bg-line-strong sm:block" aria-hidden /> : null}
           </li>
         );
       })}
@@ -63,7 +69,7 @@ export function NewScanView() {
   const [winStart, setWinStart] = React.useState("22:00");
   const [winEnd, setWinEnd] = React.useState("06:00");
   const [behaviour, setBehaviour] = React.useState<"pause_resume" | "stop">("pause_resume");
-  const [name, setName] = React.useState(`Skan doraźny — ${fmtDate(new Date().toISOString())}`);
+  const [name, setName] = React.useState(`Skan doraźny ${fmtDate(new Date().toISOString())}`);
   const [pending, setPending] = React.useState(false);
 
   const targets = useQuery({ queryKey: ["targets", "all"], queryFn: () => api.targets.list({ page_size: 500, sort: "-criticality_rank,value" }) });
@@ -120,11 +126,7 @@ export function NewScanView() {
 
   return (
     <Container className="pb-12">
-      <PageHeader
-        back={{ href: "/scans", label: "Skanowania" }}
-        title="Nowe skanowanie"
-        description="Wybierz cele, profil i termin. Przed uruchomieniem zobaczysz szacowany czas, podział na podgrupy i to, czy skan zmieści się w oknie."
-      />
+      <PageHeader back={{ href: "/scans", label: "Skanowania" }} title="Nowe skanowanie" />
       <div className="mb-6">
         <Stepper step={step} onStep={go} maxStep={maxStep} />
       </div>
@@ -133,7 +135,6 @@ export function NewScanView() {
           {step === 0 ? (
             <Panel
               title="Cele skanowania"
-              description="Zaznacz zakresy i domeny. Cele wykluczone ze skanowania nie są dostępne."
               actions={
                 <div className="flex gap-2">
                   <Button size="sm" variant="ghost" onClick={() => setSelected(new Set((targets.data?.items ?? []).filter((t) => !t.excluded).map((t) => t.id)))}>
@@ -166,16 +167,13 @@ export function NewScanView() {
                         }
                       />
                       <span className="grid min-w-0 flex-1 gap-0.5">
-                        <span className="mono truncate font-semibold">{t.value}</span>
+                        <span className="mono truncate font-medium">{t.value}</span>
                         <span className="truncate text-xs text-ink-2">
-                          {t.name ?? "—"}
-                          {t.excluded ? " — wykluczony ze skanowania" : ""}
+                          {t.name ?? TARGET_TYPE_LABEL[t.type]}
+                          {t.excluded ? ", wykluczony ze skanowania" : ""}
                         </span>
                       </span>
-                      <Chip tone="outline" className="hidden sm:inline-flex">
-                        {TARGET_TYPE_LABEL[t.type]}
-                      </Chip>
-                      <span className="tabular w-24 text-right text-sm text-ink-2">{t.type === "domain" ? "domena" : `${fmtNumber(t.address_count)} adr.`}</span>
+                      <span className="tabular w-32 text-right text-sm text-ink-2">{t.type === "domain" ? "domena" : countLabel(t.address_count, ["adres", "adresy", "adresów"])}</span>
                       <span className="hidden w-20 text-right text-xs text-ink-2 md:inline">{CRITICALITY_LABEL[t.criticality]}</span>
                     </label>
                   </li>
@@ -192,7 +190,7 @@ export function NewScanView() {
           ) : null}
 
           {step === 1 ? (
-            <Panel title="Profil skanowania" description="Profil określa porty, tempo, timing nmap i zakres sprawdzeń HTTP. Szczegóły edytujesz w zakładce Profile.">
+            <Panel title="Profil skanowania" description="Profile edytujesz w zakładce Profile na stronie Skanowania.">
               <div className="grid gap-5">
                 <RadioCards
                   columns={2}
@@ -204,41 +202,45 @@ export function NewScanView() {
                     description: (
                       <>
                         {p.description}
-                        <span className="mt-2 flex flex-wrap gap-1">
-                          <Chip>{fmtNumber(p.rate_limit_rps)} zapytań/s</Chip>
-                          <Chip>nmap {p.nmap_timing}</Chip>
-                          <Chip>{p.max_concurrency} wątków</Chip>
+                        <span className="mt-1.5 block text-ink">
+                          {fmtNumber(p.rate_limit_rps)} zapytań/s, nmap <span className="mono">{p.nmap_timing}</span>, {countLabel(p.max_concurrency, ["wątek", "wątki", "wątków"])}
                         </span>
                       </>
                     ),
-                    icon: p.nmap_timing === "T2" ? <ShieldCheck /> : p.nmap_timing === "T4" ? <Zap /> : <CircleCheck />,
                   }))}
                 />
-                <div className="grid gap-2 rounded-xl border border-line bg-surface-2 p-4 text-sm">
-                  <p className="flex items-center gap-2 font-bold">
-                    <ShieldCheck className="size-4 text-link" aria-hidden /> Zasady bezpiecznego skanowania
-                  </p>
-                  <ul className="grid gap-1 text-ink-2">
-                    <li>Globalny limit: {fmtNumber(settings.data?.scan_safety.max_rate_rps ?? 500)} zapytań/s i {settings.data?.scan_safety.max_concurrency ?? 64} równoległych połączeń — profil nie może go przekroczyć.</li>
-                    <li>Skaner przedstawia się nagłówkiem User-Agent: <code className="mono text-ink">{settings.data?.scan_safety.user_agent ?? "CBI-AGH-ASI"}</code></li>
-                    <li>Sygnatury wykonują tylko proste żądania GET/HEAD — bez logowania, formularzy i parametrów ataku.</li>
-                    <li>Adresy z listy wykluczeń ({settings.data?.scan_safety.excluded_cidrs.join(", ") ?? "—"}) są pomijane zawsze.</li>
+                <section className="grid gap-2 border-t border-line pt-4 text-sm" aria-labelledby="safety-rules">
+                  <h3 id="safety-rules" className="font-semibold">
+                    Zasady bezpiecznego skanowania
+                  </h3>
+                  <ul className="grid list-disc gap-1 pl-5 text-ink-2 marker:text-ink-3">
+                    <li>
+                      Globalny limit: {fmtNumber(settings.data?.scan_safety.max_rate_rps ?? 500)} zapytań/s i{" "}
+                      {countLabel(settings.data?.scan_safety.max_concurrency ?? 64, ["równoległe połączenie", "równoległe połączenia", "równoległych połączeń"])}; profil nie może go przekroczyć.
+                    </li>
+                    <li>
+                      Skaner przedstawia się nagłówkiem User-Agent: <code className="mono text-ink">{settings.data?.scan_safety.user_agent ?? "CBI-AGH-ASI"}</code>
+                    </li>
+                    <li>Sygnatury wykonują tylko proste żądania GET/HEAD, bez logowania, formularzy i parametrów ataku.</li>
+                    <li>
+                      Adresy z listy wykluczeń (<span className="mono">{settings.data?.scan_safety.excluded_cidrs.join(", ") ?? "—"}</span>) są pomijane zawsze.
+                    </li>
                   </ul>
-                </div>
+                </section>
               </div>
             </Panel>
           ) : null}
 
           {step === 2 ? (
-            <Panel title="Termin uruchomienia" description="Nocne okno ogranicza wpływ skanowania na użytkowników. Jeśli skan nie zdąży, zostanie wstrzymany i wznowiony w kolejnym oknie od ostatniej podgrupy.">
+            <Panel title="Termin uruchomienia" description="Skan, który nie zdąży, wznowi się w kolejnym oknie od ostatniej podgrupy.">
               <div className="grid gap-5">
                 <RadioCards
                   value={start}
                   onValueChange={setStart}
                   options={[
-                    { value: "now", title: "Teraz", description: "Skan doraźny, uruchamiany od razu, bez czekania na okno.", icon: <Play /> },
-                    { value: "window", title: "W najbliższym oknie", description: `Start o ${winStart}, wstrzymanie o ${winEnd}.`, icon: <CalendarClock /> },
-                    { value: "test", title: "Teraz z oknem testowym", description: "Demonstracja: okno zamknie się po kilkudziesięciu sekundach, a skan wznowi się w kolejnym.", icon: <FlaskConical /> },
+                    { value: "now", title: "Teraz", description: "Skan doraźny, uruchamiany od razu, bez czekania na okno." },
+                    { value: "window", title: "W najbliższym oknie", description: `Start o ${winStart}, wstrzymanie o ${winEnd}.` },
+                    { value: "test", title: "Teraz z oknem testowym", description: "Demonstracja: okno zamknie się po kilkudziesięciu sekundach, a skan wznowi się w kolejnym." },
                   ]}
                 />
                 {start === "test" ? (
@@ -270,31 +272,29 @@ export function NewScanView() {
           ) : null}
 
           {step === 3 ? (
-            <Panel title="Podsumowanie" description="Sprawdź plan i uruchom skanowanie.">
+            <Panel title="Podsumowanie">
               <div className="grid gap-5">
                 <Field label="Nazwa skanowania" htmlFor="scan-name">
                   <Input id="scan-name" value={name} onChange={(e) => setName(e.target.value)} />
                 </Field>
                 {est ? (
                   <div className="grid gap-3">
-                    <div className={cn("flex items-start gap-3 rounded-xl p-4", est.fits_window ? "bg-success-soft" : "bg-unstable-soft")}>
-                      {est.fits_window ? <CircleCheck className="mt-0.5 size-5 text-success" aria-hidden /> : <TriangleAlert className="mt-0.5 size-5 text-unstable-ink" aria-hidden />}
+                    {/* Only the warning gets a tinted box; "it fits" is the normal case and stays plain. */}
+                    <div className={cn("flex items-start gap-3", !est.fits_window && "rounded-lg bg-unstable-soft p-4 contrast:border contrast:border-current")}>
+                      {est.fits_window ? <CircleCheck className="mt-0.5 size-5 shrink-0 text-ink-2" aria-hidden /> : <TriangleAlert className="mt-0.5 size-5 shrink-0 text-unstable-ink" aria-hidden />}
                       <div className="grid gap-0.5">
-                        <p className="font-bold">{est.fits_window ? "Skan zmieści się w oknie" : `Skan potrzebuje ${est.windows_needed} okien`}</p>
+                        <p className="font-semibold">{est.fits_window ? "Skan zmieści się w oknie" : `Skan potrzebuje ${countLabel(est.windows_needed, ["okna", "okien", "okien"])}`}</p>
                         <p className="text-sm text-ink-2">
                           Szacowany czas: {fmtDuration(est.est_duration_s)} przy {fmtNumber(est.rate_rps)} zapytaniach/s; okno trwa {fmtDuration(est.window_seconds)}.
                         </p>
                       </div>
                     </div>
-                    <ul className="grid gap-1.5 text-sm text-ink-2">
+                    <ul className="grid list-disc gap-1.5 pl-5 text-sm text-ink-2 marker:text-ink-3">
                       {est.notes.map((n) => (
-                        <li key={n} className="flex gap-2">
-                          <span aria-hidden>•</span>
-                          {n}
-                        </li>
+                        <li key={n}>{n}</li>
                       ))}
                     </ul>
-                    <p className="text-sm text-ink-3">W trybie demonstracyjnym przebieg jest przyspieszony i trwa około minuty.</p>
+                    <p className="text-sm text-ink-2">W trybie demonstracyjnym przebieg jest przyspieszony i trwa około minuty.</p>
                   </div>
                 ) : (
                   <Skeleton className="h-24" />
@@ -322,42 +322,50 @@ export function NewScanView() {
         </div>
 
         <aside className="sticky top-32 grid gap-4 rounded-xl border border-line bg-surface p-5" aria-label="Plan skanowania">
-          <h2 className="font-bold">Plan skanowania</h2>
+          <h2 className="font-semibold">Plan skanowania</h2>
           <dl className="grid gap-2.5 text-sm">
             <div className="flex justify-between gap-3">
               <dt className="text-ink-2">Cele</dt>
-              <dd className="font-semibold">{ids.length}</dd>
+              <dd className="tabular">{ids.length}</dd>
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-ink-2">Adresy</dt>
-              <dd className="tabular font-semibold">{est ? fmtNumber(est.addresses) : "—"}</dd>
+              <dd className="tabular">{est ? fmtNumber(est.addresses) : "—"}</dd>
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-ink-2">Szacowane aktywne hosty</dt>
-              <dd className="tabular font-semibold">{est ? `ok. ${fmtNumber(est.est_alive)}` : "—"}</dd>
+              <dd className="tabular">{est ? `ok. ${fmtNumber(est.est_alive)}` : "—"}</dd>
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-ink-2">Profil</dt>
-              <dd className="text-right font-semibold">{profile?.name ?? "—"}</dd>
+              <dd className="text-right">{profile?.name ?? "—"}</dd>
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-ink-2">Podgrupy</dt>
-              <dd className="tabular font-semibold">{est ? `${est.batches} × /${est.batch_prefix}` : "—"}</dd>
+              <dd className="tabular">
+                {est ? (
+                  <>
+                    {est.batches} × <span className="mono">/{est.batch_prefix}</span>
+                  </>
+                ) : (
+                  "—"
+                )}
+              </dd>
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-ink-2">Szacowany czas</dt>
-              <dd className="font-semibold">{est ? fmtDuration(est.est_duration_s) : "—"}</dd>
+              <dd>{est ? fmtDuration(est.est_duration_s) : "—"}</dd>
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-ink-2">Termin</dt>
-              <dd className="text-right font-semibold">{start === "now" ? "teraz" : start === "test" ? `teraz, okno ${testSeconds} s` : `okno ${winStart}–${winEnd}`}</dd>
+              <dd className="text-right">{start === "now" ? "teraz" : start === "test" ? `teraz, okno ${testSeconds} s` : `okno ${winStart}–${winEnd}`}</dd>
             </div>
           </dl>
           {est ? (
             <div className="grid gap-1.5">
               <div className="flex justify-between text-xs text-ink-2">
                 <span>Czas skanu względem okna</span>
-                <span>{Math.round((est.est_duration_s / (est.window_seconds || 1)) * 100)}%</span>
+                <span className="tabular">{Math.round((est.est_duration_s / (est.window_seconds || 1)) * 100)}%</span>
               </div>
               <div className="relative h-2 overflow-hidden rounded-full bg-surface-3">
                 <div
