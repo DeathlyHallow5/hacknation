@@ -1,0 +1,14 @@
+# Opt-in SYN (half-open) port discovery:
+#   docker compose -f compose.yaml -f compose.syn.yaml up -d
+# Faster than CONNECT and nothing reaches the applications' logs, but it loosens the core's
+# isolation: NET_RAW is granted and no-new-privileges is off so the file capability of
+# /opt/asi-tools/naabu-raw (and only that binary) takes effect. The core still runs as a
+# non-root user with every other capability dropped. See docs/BENCHMARK.md.
+services:
+  core:
+    cap_add:
+      - NET_RAW
+    security_opt: !override
+      - no-new-privileges:false
+    environment:
+      ASI_SYN_SCAN: "1"

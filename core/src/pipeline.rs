@@ -534,11 +534,15 @@ pub(crate) async fn run_batch(
         alive = parse::nmap_alive(&xml)?;
     }
 
-    // 2) Open ports on every input (CONNECT scan: works without raw-socket capabilities).
+    // 2) Open ports on every input. CONNECT scan by default (no raw-socket capabilities);
+    //    SYN (half-open, nothing reaches the applications) when enabled — compose.syn.yaml.
     let list = ListFile::new(run_id, index, "ports", inputs.to_vec()).await?;
+    let syn = state.config.syn_scan.as_deref();
     // -duc: no update check — the scanner never talks to anything but the targets.
-    let mut naabu_args =
-        vec!["-l", list.arg(), "-s", "c", "-Pn", "-rate", &rate, "-c", &threads, "-retries", "1", "-json", "-silent", "-duc"];
+    let mut naabu_args = vec![
+        "-l", list.arg(), "-s", if syn.is_some() { "s" } else { "c" }, "-Pn", "-rate", &rate, "-c", &threads,
+        "-retries", "1", "-json", "-silent", "-duc",
+    ];
     match scan.ports.as_str() {
         preset @ ("100" | "1000" | "full") => naabu_args.extend(["-top-ports", preset]),
         list => naabu_args.extend(["-p", list]),
@@ -546,7 +550,11 @@ pub(crate) async fn run_batch(
     // Raw outputs are kept (encrypted) for DefectDojo, whose parsers take these native
     // formats: "Naabu Scan", "Nmap Scan", "httpx Scan" (PROJECT.md §11.2).
     let mut artifacts: Vec<(&str, String)> = Vec::new();
-    let naabu_out = engine::run(tools, Tool::Naabu, &naabu_args, left()).await.context("naabu")?;
+    let naabu_out = match syn {
+        Some(bin) => engine::run_bin(bin, "naabu", &naabu_args, left()).await,
+        None => engine::run(tools, Tool::Naabu, &naabu_args, left()).await,
+    }
+    .context("naabu")?;
     let open = parse::naabu(&naabu_out);
     artifacts.push(("naabu", naabu_out));
     for (ip, hp) in &open {

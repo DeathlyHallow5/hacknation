@@ -200,6 +200,9 @@ pub async fn engines(State(s): State<AppState>) -> V1<Json<Vec<Value>>> {
     for t in Tool::ALL {
         let (name, purpose, args): (&str, &str, &[&str]) = match t {
             Tool::Nmap => ("nmap", "Wykrywanie hostów i identyfikacja usług (-sn, -sV)", &["--version"]),
+            Tool::Naabu if s.config.syn_scan.is_some() => {
+                ("naabu", "Szybkie skanowanie portów (SYN, półotwarte, z limitem tempa)", &["-version"])
+            }
             Tool::Naabu => ("naabu", "Szybkie skanowanie portów (connect, z limitem tempa)", &["-version"]),
             Tool::Httpx => ("httpx", "Odcisk HTTP/HTTPS: tytuł, nagłówki, TLS, technologie", &["-version"]),
             Tool::Tlsx => ("tlsx", "Certyfikaty i parametry TLS", &["-version"]),
