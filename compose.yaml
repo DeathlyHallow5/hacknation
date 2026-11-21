@@ -1,0 +1,82 @@
+name: asi
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: asi
+      POSTGRES_USER: asi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-asi-dev-password}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U asi -d asi"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  core:
+    build:
+      context: .
+      dockerfile: core/Dockerfile
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${ASI_API_PORT:-8000}:8000"
+    environment:
+      DATABASE_URL: postgres://asi:${POSTGRES_PASSWORD:-asi-dev-password}@db:5432/asi
+      ASI_DATA_KEY: ${ASI_DATA_KEY:?set ASI_DATA_KEY in .env (see .env.example)}
+      ASI_MAX_CONCURRENCY: ${ASI_MAX_CONCURRENCY:-256}
+      DEFECTDOJO_URL: ${DEFECTDOJO_URL:-}
+      DEFECTDOJO_TOKEN: ${DEFECTDOJO_TOKEN:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [default, lab]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  web:
+    build:
+      context: ./web
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${ASI_WEB_PORT:-3000}:3000"
+    environment:
+      ASI_API_INTERNAL_URL: http://core:8000
+    depends_on:
+      core:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # Local test lab (docker compose --profile lab up): sample services on an isolated
+  # network so we can demo >=2 scan runs and change detection without touching real hosts.
+  lab-nginx:
+    profiles: [lab]
+    image: nginx:1.27-alpine
+    networks:
+      lab:
+        ipv4_address: 172.30.0.10
+  lab-httpd:
+    profiles: [lab]
+    image: httpd:2.4-alpine
+    networks:
+      lab:
+        ipv4_address: 172.30.0.11
+
+networks:
+  lab:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  db-data:

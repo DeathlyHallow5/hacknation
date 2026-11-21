@@ -1,12 +1,18 @@
-node_modules/
 .env
 .env.*
+!.env.example
 *.log
-dist/
-build/
-__pycache__/
-.venv/
-venv/
 .DS_Store
 .idea/
 .vscode/
+
+# Rust
+core/target/
+
+# Web
+web/node_modules/
+web/.next/
+
+# Downloaded scanner binaries / templates
+tools/bin/
+tools/nuclei-templates/
