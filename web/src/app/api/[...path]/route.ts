@@ -9,7 +9,7 @@ async function proxy(
   const route = path.join("/");
   if (
     // Allow-list of core API routes (UUID ids). Extend as core/src/api.rs grows.
-    !/^(health|tools|targets|scans(?:\/[0-9a-f-]{36}(?:\/(events|cancel|diff))?)?)$/.test(
+    !/^(health|tools|targets|scans(?:\/[0-9a-f-]{36}\/(run|runs))?|runs\/[0-9a-f-]{36}(?:\/(findings|cancel|diff))?)$/.test(
       route,
     )
   ) {

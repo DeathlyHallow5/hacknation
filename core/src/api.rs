@@ -1,16 +1,17 @@
 //! Module 6 — HTTP API consumed by the Next.js frontend through its `/api` proxy.
-//! Skeleton endpoints: health, tool inventory, targets (list/import), scans (list/create).
-//! TODO(C): auth + RBAC extractor (rbac::Role::can) on every mutating route.
+//! TODO(C): auth + RBAC extractor (rbac::Role::can) on every route; decrypted evidence in
+//! `/runs/{id}/findings` must then require at least `Read` on the scan.
 
-use crate::{engine::Tool, input, AppState};
+use crate::{engine::Tool, input, pipeline, AppState};
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 pub fn router(state: AppState) -> Router {
@@ -19,14 +20,28 @@ pub fn router(state: AppState) -> Router {
         .route("/api/tools", get(tools))
         .route("/api/targets", get(list_targets).post(import_targets))
         .route("/api/scans", get(list_scans).post(create_scan))
+        .route("/api/scans/{id}/run", post(run_now))
+        .route("/api/scans/{id}/runs", get(list_runs))
+        .route("/api/runs/{id}", get(get_run))
+        .route("/api/runs/{id}/findings", get(run_findings))
+        .route("/api/runs/{id}/cancel", post(cancel_run))
         .with_state(state)
 }
 
-type ApiResult<T> = Result<Json<T>, (StatusCode, Json<Value>)>;
+type ApiError = (StatusCode, Json<Value>);
+type ApiResult<T> = Result<Json<T>, ApiError>;
 
-fn internal(e: impl std::fmt::Display) -> (StatusCode, Json<Value>) {
+fn internal(e: impl std::fmt::Display) -> ApiError {
     tracing::error!("{e}");
     (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "detail": "internal error" })))
+}
+
+fn bad(msg: impl Into<String>) -> ApiError {
+    (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({ "detail": msg.into() })))
+}
+
+fn not_found() -> ApiError {
+    (StatusCode::NOT_FOUND, Json(json!({ "detail": "not found" })))
 }
 
 async fn health(State(s): State<AppState>) -> ApiResult<Value> {
@@ -42,6 +57,8 @@ async fn tools(State(s): State<AppState>) -> Json<Vec<Value>> {
             .collect(),
     )
 }
+
+// ---------- targets ----------
 
 #[derive(Serialize, sqlx::FromRow)]
 struct TargetRow {
@@ -68,41 +85,77 @@ struct ImportBody {
     text: String,
 }
 
+/// Upsert targets, returning their ids (existing rows are reused).
+async fn upsert_targets(
+    tx: &mut sqlx::PgConnection,
+    targets: &[input::Target],
+) -> Result<(Vec<Uuid>, u64), ApiError> {
+    let mut ids = Vec::with_capacity(targets.len());
+    let mut inserted = 0;
+    for t in targets {
+        let (id, new): (Uuid, bool) = sqlx::query_as(
+            "INSERT INTO targets (kind, value) VALUES ($1, $2)
+             ON CONFLICT (value) DO UPDATE SET value = EXCLUDED.value
+             RETURNING id, (xmax = 0) AS inserted",
+        )
+        .bind(&t.kind)
+        .bind(&t.value)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(internal)?;
+        ids.push(id);
+        inserted += new as u64;
+    }
+    Ok((ids, inserted))
+}
+
+fn parse_errors(errors: &[(usize, input::InputError)]) -> Vec<Value> {
+    errors.iter().map(|(line, e)| json!({ "line": line, "error": e.to_string() })).collect()
+}
+
 async fn import_targets(State(s): State<AppState>, Json(body): Json<ImportBody>) -> ApiResult<Value> {
     let (targets, errors) = input::parse_list(&body.text);
-    let mut inserted = 0u64;
-    for t in &targets {
-        inserted += sqlx::query("INSERT INTO targets (kind, value) VALUES ($1, $2) ON CONFLICT (value) DO NOTHING")
-            .bind(&t.kind)
-            .bind(&t.value)
-            .execute(&s.db)
-            .await
-            .map_err(internal)?
-            .rows_affected();
-    }
-    let addresses: u128 = targets.iter().map(|t| t.address_count()).sum();
+    let mut tx = s.db.begin().await.map_err(internal)?;
+    let (_, inserted) = upsert_targets(&mut tx, &targets).await?;
+    tx.commit().await.map_err(internal)?;
     Ok(Json(json!({
         "parsed": targets.len(),
         "inserted": inserted,
-        "addresses": addresses.to_string(),
-        "errors": errors.iter().map(|(line, e)| json!({ "line": line, "error": e.to_string() })).collect::<Vec<_>>(),
+        "hosts": input::total_hosts(&targets).to_string(),
+        "errors": parse_errors(&errors),
     })))
 }
+
+// ---------- scans ----------
 
 #[derive(Serialize, sqlx::FromRow)]
 struct ScanRow {
     id: Uuid,
     name: String,
-    status: String,
+    enabled: bool,
     rate_limit_pps: i32,
     window_minutes: Option<i32>,
+    repeat_every_minutes: Option<i32>,
+    ports: String,
+    batch_size: i32,
+    preflight: bool,
+    next_run_at: Option<chrono::DateTime<chrono::Utc>>,
+    target_count: i64,
+    last_run_id: Option<Uuid>,
+    last_run_status: Option<String>,
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
 async fn list_scans(State(s): State<AppState>) -> ApiResult<Vec<ScanRow>> {
     let rows = sqlx::query_as::<_, ScanRow>(
-        "SELECT id, name, status::text AS status, rate_limit_pps, window_minutes, created_at \
-         FROM scans ORDER BY created_at DESC LIMIT 100",
+        "SELECT s.id, s.name, s.enabled, s.rate_limit_pps, s.window_minutes, s.repeat_every_minutes,
+                s.ports, s.batch_size, s.preflight, s.next_run_at, s.created_at,
+                (SELECT count(*) FROM scan_targets st WHERE st.scan_id = s.id) AS target_count,
+                r.id AS last_run_id, r.status::text AS last_run_status
+         FROM scans s
+         LEFT JOIN LATERAL (SELECT id, status FROM scan_runs WHERE scan_id = s.id
+                            ORDER BY started_at DESC LIMIT 1) r ON true
+         ORDER BY s.created_at DESC LIMIT 100",
     )
     .fetch_all(&s.db)
     .await
@@ -113,29 +166,268 @@ async fn list_scans(State(s): State<AppState>) -> ApiResult<Vec<ScanRow>> {
 #[derive(Deserialize)]
 struct CreateScan {
     name: String,
+    /// Targets as text (same format as /targets import). Optional if `target_ids` given.
+    #[serde(default)]
+    targets: String,
+    #[serde(default)]
+    target_ids: Vec<Uuid>,
     #[serde(default = "default_rate")]
     rate_limit_pps: i32,
     window_minutes: Option<i32>,
-    schedule_cron: Option<String>,
+    repeat_every_minutes: Option<i32>,
+    #[serde(default = "default_ports")]
+    ports: String,
+    #[serde(default = "default_batch")]
+    batch_size: i32,
+    #[serde(default = "yes")]
+    preflight: bool,
+    /// Start immediately (default). `false` = saved, start later via /scans/{id}/run.
+    #[serde(default = "yes")]
+    start: bool,
 }
 fn default_rate() -> i32 {
     100
 }
+fn default_ports() -> String {
+    "100".into()
+}
+fn default_batch() -> i32 {
+    256
+}
+fn yes() -> bool {
+    true
+}
 
 async fn create_scan(State(s): State<AppState>, Json(b): Json<CreateScan>) -> ApiResult<Value> {
-    if !(1..=10_000).contains(&b.rate_limit_pps) {
-        return Err((StatusCode::UNPROCESSABLE_ENTITY, Json(json!({ "detail": "rate_limit_pps must be 1..=10000" }))));
+    if b.name.trim().is_empty() {
+        return Err(bad("name is required"));
     }
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO scans (name, rate_limit_pps, window_minutes, schedule_cron) VALUES ($1, $2, $3, $4) RETURNING id",
+    if !(1..=10_000).contains(&b.rate_limit_pps) {
+        return Err(bad("rate_limit_pps must be 1..=10000"));
+    }
+    if !(1..=65_536).contains(&b.batch_size) {
+        return Err(bad("batch_size must be 1..=65536"));
+    }
+    if !pipeline::valid_ports(&b.ports) {
+        return Err(bad("ports must be 100, 1000, full or a list like 22,80,8000-8100"));
+    }
+    if b.window_minutes.is_some_and(|w| w <= 0) || b.repeat_every_minutes.is_some_and(|r| r <= 0) {
+        return Err(bad("window_minutes and repeat_every_minutes must be positive"));
+    }
+    if let (Some(w), Some(r)) = (b.window_minutes, b.repeat_every_minutes) {
+        if r < w {
+            return Err(bad("repeat_every_minutes must be >= window_minutes"));
+        }
+    }
+    let (targets, errors) = input::parse_list(&b.targets);
+    if targets.is_empty() && b.target_ids.is_empty() {
+        return Err(bad("no valid targets"));
+    }
+
+    let mut tx = s.db.begin().await.map_err(internal)?;
+    let (mut ids, _) = upsert_targets(&mut tx, &targets).await?;
+    ids.extend(&b.target_ids);
+    let scan_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO scans (name, rate_limit_pps, window_minutes, repeat_every_minutes, ports, batch_size, preflight, next_run_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $8 THEN now() ELSE NULL END) RETURNING id",
     )
-    .bind(&b.name)
+    .bind(b.name.trim())
     .bind(b.rate_limit_pps)
     .bind(b.window_minutes)
-    .bind(&b.schedule_cron)
-    .fetch_one(&s.db)
+    .bind(b.repeat_every_minutes)
+    .bind(&b.ports)
+    .bind(b.batch_size)
+    .bind(b.preflight)
+    .bind(b.start)
+    .fetch_one(&mut *tx)
     .await
     .map_err(internal)?;
-    // TODO(A): hand the scan to the scheduler queue.
-    Ok(Json(json!({ "id": id, "status": "queued" })))
+    let linked = sqlx::query(
+        "INSERT INTO scan_targets (scan_id, target_id) SELECT $1, t.id FROM targets t WHERE t.id = ANY($2)
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(scan_id)
+    .bind(&ids)
+    .execute(&mut *tx)
+    .await
+    .map_err(internal)?
+    .rows_affected();
+    tx.commit().await.map_err(internal)?;
+
+    Ok(Json(json!({
+        "id": scan_id,
+        "targets": linked,
+        "hosts": input::total_hosts(&targets).to_string(),
+        "errors": parse_errors(&errors),
+        "scheduled": b.start,
+    })))
+}
+
+async fn run_now(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Value> {
+    let n = sqlx::query("UPDATE scans SET next_run_at = now(), enabled = true WHERE id = $1")
+        .bind(id)
+        .execute(&s.db)
+        .await
+        .map_err(internal)?
+        .rows_affected();
+    if n == 0 {
+        return Err(not_found());
+    }
+    Ok(Json(json!({ "id": id, "scheduled": true })))
+}
+
+// ---------- runs ----------
+
+#[derive(Serialize, sqlx::FromRow)]
+struct RunRow {
+    id: Uuid,
+    scan_id: Uuid,
+    status: String,
+    checkpoint: i32,
+    total_batches: Option<i32>,
+    started_at: chrono::DateTime<chrono::Utc>,
+    window_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    resume_at: Option<chrono::DateTime<chrono::Utc>>,
+    finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    error: Option<String>,
+    stats: Value,
+}
+
+const RUN_COLUMNS: &str = "id, scan_id, status::text AS status, checkpoint, total_batches, started_at,
+    window_started_at, resume_at, finished_at, error, stats";
+
+async fn list_runs(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Vec<RunRow>> {
+    let rows = sqlx::query_as::<_, RunRow>(sqlx::AssertSqlSafe(format!(
+        "SELECT {RUN_COLUMNS} FROM scan_runs WHERE scan_id = $1 ORDER BY started_at DESC LIMIT 100"
+    )))
+    .bind(id)
+    .fetch_all(&s.db)
+    .await
+    .map_err(internal)?;
+    Ok(Json(rows))
+}
+
+async fn get_run(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<RunRow> {
+    sqlx::query_as::<_, RunRow>(sqlx::AssertSqlSafe(format!(
+        "SELECT {RUN_COLUMNS} FROM scan_runs WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(&s.db)
+    .await
+    .map_err(internal)?
+    .map(Json)
+    .ok_or_else(not_found)
+}
+
+async fn cancel_run(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Value> {
+    let n = sqlx::query(
+        "UPDATE scan_runs SET status = 'cancelled', resume_at = NULL,
+             finished_at = CASE WHEN status = 'running' THEN finished_at ELSE now() END
+         WHERE id = $1 AND status IN ('queued', 'running', 'paused')",
+    )
+    .bind(id)
+    .execute(&s.db)
+    .await
+    .map_err(internal)?
+    .rows_affected();
+    if n == 0 {
+        return Err(bad("run is not active"));
+    }
+    // A running run stops after its current batch.
+    Ok(Json(json!({ "id": id, "status": "cancelled" })))
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+struct HostOut {
+    id: Uuid,
+    address: String,
+    hostname: Option<String>,
+    state: String,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+struct ServiceOut {
+    id: Uuid,
+    host_id: Uuid,
+    port: i32,
+    protocol: String,
+    service: Option<String>,
+    product: Option<String>,
+    version: Option<String>,
+    confidence: f32,
+    banner: Option<Value>,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+struct HttpOut {
+    service_id: Uuid,
+    url: String,
+    status_code: Option<i32>,
+    title: Option<String>,
+    redirects: Option<Vec<String>>,
+    technologies: Option<Vec<String>>,
+    cms: Option<String>,
+    favicon_hash: Option<String>,
+    is_admin: bool,
+    is_staging: bool,
+    headers: Option<Value>,
+    cookies: Option<Value>,
+    tls: Option<Value>,
+}
+
+/// Hosts → services → HTTP findings of one run, with encrypted fields decrypted.
+async fn run_findings(State(s): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<Value> {
+    let key = s.config.data_key.as_str();
+    let hosts = sqlx::query_as::<_, HostOut>(
+        "SELECT id, host(address) AS address, hostname, state::text AS state
+         FROM hosts WHERE run_id = $1 ORDER BY address",
+    )
+    .bind(id)
+    .fetch_all(&s.db)
+    .await
+    .map_err(internal)?;
+    let services = sqlx::query_as::<_, ServiceOut>(
+        "SELECT s.id, s.host_id, s.port, s.protocol, s.service, s.product, s.version, s.confidence,
+                pgp_sym_decrypt(s.banner_enc, $2)::jsonb AS banner
+         FROM services s JOIN hosts h ON h.id = s.host_id WHERE h.run_id = $1 ORDER BY s.port",
+    )
+    .bind(id)
+    .bind(key)
+    .fetch_all(&s.db)
+    .await
+    .map_err(internal)?;
+    let http = sqlx::query_as::<_, HttpOut>(
+        "SELECT f.service_id, f.url, f.status_code, f.title, f.redirects, f.technologies, f.cms,
+                f.favicon_hash, f.is_admin, f.is_staging,
+                pgp_sym_decrypt(f.headers_enc, $2)::jsonb AS headers,
+                pgp_sym_decrypt(f.cookies_enc, $2)::jsonb AS cookies,
+                pgp_sym_decrypt(f.tls_enc, $2)::jsonb AS tls
+         FROM http_findings f JOIN services s ON s.id = f.service_id JOIN hosts h ON h.id = s.host_id
+         WHERE h.run_id = $1",
+    )
+    .bind(id)
+    .bind(key)
+    .fetch_all(&s.db)
+    .await
+    .map_err(internal)?;
+
+    let mut http_by_service: BTreeMap<Uuid, Vec<HttpOut>> = BTreeMap::new();
+    for f in http {
+        http_by_service.entry(f.service_id).or_default().push(f);
+    }
+    let mut services_by_host: BTreeMap<Uuid, Vec<Value>> = BTreeMap::new();
+    for svc in services {
+        let http = http_by_service.remove(&svc.id).unwrap_or_default();
+        let mut v = serde_json::to_value(&svc).map_err(internal)?;
+        v["http"] = serde_json::to_value(http).map_err(internal)?;
+        services_by_host.entry(svc.host_id).or_default().push(v);
+    }
+    let hosts: Vec<Value> = hosts
+        .into_iter()
+        .map(|h| {
+            let services = services_by_host.remove(&h.id).unwrap_or_default();
+            json!({ "address": h.address, "hostname": h.hostname, "state": h.state, "services": services })
+        })
+        .collect();
+    Ok(Json(json!({ "run_id": id, "hosts": hosts })))
 }

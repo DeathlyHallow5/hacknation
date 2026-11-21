@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///usr/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
+<!-- Nmap 7.93 scan initiated Sat Nov 21 12:04:20 2026 as: nmap -sT -sV -Pn -n -p 80,8000 -&#45;max-rate 200 -oX - 172.30.0.10 172.30.0.11 172.30.0.2 -->
+<nmaprun scanner="nmap" args="nmap -sT -sV -Pn -n -p 80,8000 -&#45;max-rate 200 -oX - 172.30.0.10 172.30.0.11 172.30.0.2" start="1795262660" startstr="Sat Nov 21 12:04:20 2026" version="7.93" xmloutputversion="1.05">
+<scaninfo type="connect" protocol="tcp" numservices="2" services="80,8000"/>
+<verbose level="0"/>
+<debugging level="0"/>
+<host starttime="1795262661" endtime="1795262672"><status state="up" reason="user-set" reason_ttl="0"/>
+<address addr="172.30.0.10" addrtype="ipv4"/>
+<hostnames>
+</hostnames>
+<ports><port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="http" product="nginx" version="1.27.5" method="probed" conf="10"><cpe>cpe:/a:igor_sysoev:nginx:1.27.5</cpe></service></port>
+<port protocol="tcp" portid="8000"><state state="closed" reason="conn-refused" reason_ttl="0"/><service name="http-alt" method="table" conf="3"/></port>
+</ports>
+<times srtt="266" rttvar="3753" to="100000"/>
+</host>
+<host starttime="1795262661" endtime="1795262672"><status state="up" reason="user-set" reason_ttl="0"/>
+<address addr="172.30.0.11" addrtype="ipv4"/>
+<hostnames>
+</hostnames>
+<ports><port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="http" product="Apache httpd" version="2.4.71" extrainfo="(Unix)" method="probed" conf="10"><cpe>cpe:/a:apache:http_server:2.4.71</cpe></service></port>
+<port protocol="tcp" portid="8000"><state state="closed" reason="conn-refused" reason_ttl="0"/><service name="http-alt" method="table" conf="3"/></port>
+</ports>
+<times srtt="265" rttvar="3765" to="100000"/>
+</host>
+<host starttime="1795262661" endtime="1795262672"><status state="up" reason="user-set" reason_ttl="0"/>
+<address addr="172.30.0.2" addrtype="ipv4"/>
+<hostnames>
+</hostnames>
+<ports><port protocol="tcp" portid="80"><state state="closed" reason="conn-refused" reason_ttl="0"/><service name="http" method="table" conf="3"/></port>
+<port protocol="tcp" portid="8000"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="http-alt" servicefp="SF-Port8000-TCP:V=7.93%I=7%D=11/21%Time=6B0188D0%P=x86_64-pc-linux-gnu%r(GetRequest,52,&quot;HTTP/1\.0\x20404\x20Not\x20Found\r\ncontent-length:\x200\r\ndate:\x20Sat,\x2021\x20Nov\x202026\x2012:04:32\x20GMT\r\n\r\n&quot;)%r(X11Probe,67,&quot;HTTP/1\.1\x20400\x20Bad\x20Request\r\nconnection:\x20close\r\ncontent-length:\x200\r\ndate:\x20Sat,\x2021\x20Nov\x202026\x2012:04:32\x20GMT\r\n\r\n&quot;)%r(FourOhFourRequest,52,&quot;HTTP/1\.0\x20404\x20Not\x20Found\r\ncontent-length:\x200\r\ndate:\x20Sat,\x2021\x20Nov\x202026\x2012:04:32\x20GMT\r\n\r\n&quot;)%r(Socks5,67,&quot;HTTP/1\.1\x20400\x20Bad\x20Request\r\nconnection:\x20close\r\ncontent-length:\x200\r\ndate:\x20Sat,\x2021\x20Nov\x202026\x2012:04:32\x20GMT\r\n\r\n&quot;)%r(Socks4,67,&quot;HTTP/1\.1\x20400\x20Bad\x20Request\r\nconnection:\x20close\r\ncontent-length:\x200\r\ndate:\x20Sat,\x2021\x20Nov\x202026\x2012:04:32\x20GMT\r\n\r\n&quot;)%r(HTTPOptions,52,&quot;HTTP/1\.0\x20404\x20Not\x20Found\r\ncontent-length:\x200\r\ndate:\x20Sat,\x2021\x20Nov\x202026\x2012:04:32\x20GMT\r\n\r\n&quot;)%r(RTSPRequest,67,&quot;HTTP/1\.1\x20400\x20Bad\x20Request\r\nconnection:\x20close\r\ncontent-length:\x200\r\ndate:\x20Sat,\x2021\x20Nov\x202026\x2012:04:32\x20GMT\r\n\r\n&quot;)%r(RPCCheck,67,&quot;HTTP/1\.1\x20400\x20Bad\x20Request\r\nconnection:\x20close\r\ncontent-length:\x200\r\ndate:\x20Sat,\x2021\x20Nov\x202026\x2012:04:32\x20GMT\r\n\r\n&quot;)%r(DNSVersionBindReqTCP,67,&quot;HTTP/1\.1\x20400\x20Bad\x20Request\r\nconnection:\x20close\r\ncontent-length:\x200\r\ndate:\x20Sat,\x2021\x20Nov\x202026\x2012:04:32\x20GMT\r\n\r\n&quot;)%r(DNSStatusRequestTCP,67,&quot;HTTP/1\.1\x20400\x20Bad\x20Request\r\nconnection:\x20close\r\ncontent-length:\x200\r\ndate:\x20Sat,\x2021\x20Nov\x202026\x2012:04:32\x20GMT\r\n\r\n&quot;)%r(Help,67,&quot;HTTP/1\.1\x20400\x20Bad\x20Request\r\nconnection:\x20close\r\ncontent-length:\x200\r\ndate:\x20Sat,\x2021\x20Nov\x202026\x2012:04:32\x20GMT\r\n\r\n&quot;)%r(SSLSessionReq,67,&quot;HTTP/1\.1\x20400\x20Bad\x20Request\r\nconnection:\x20close\r\ncontent-length:\x200\r\ndate:\x20Sat,\x2021\x20Nov\x202026\x2012:04:32\x20GMT\r\n\r\n&quot;)%r(TerminalServerCookie,67,&quot;HTTP/1\.1\x20400\x20Bad\x20Request\r\nconnection:\x20close\r\ncontent-length:\x200\r\ndate:\x20Sat,\x2021\x20Nov\x202026\x2012:04:32\x20GMT\r\n\r\n&quot;);" method="probed" conf="10"/></port>
+</ports>
+<times srtt="286" rttvar="3760" to="100000"/>
+</host>
+<runstats><finished time="1795262672" timestr="Sat Nov 21 12:04:32 2026" summary="Nmap done at Sat Nov 21 12:04:32 2026; 3 IP addresses (3 hosts up) scanned in 12.36 seconds" elapsed="12.36" exit="success"/><hosts up="3" down="0" total="3"/>
+</runstats>
+</nmaprun>

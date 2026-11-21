@@ -14,7 +14,7 @@ pub enum TargetKind {
     Domain,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Target {
     pub kind: TargetKind,
     /// Canonical value: `10.0.0.5`, `10.0.0.0/24`, `example.com`.
@@ -32,6 +32,59 @@ impl Target {
             _ => 1,
         }
     }
+
+    /// Number of scannable hosts (IPv4 network/broadcast excluded, like `IpNet::hosts`).
+    pub fn host_count(&self) -> u128 {
+        match self.kind {
+            TargetKind::Cidr => {
+                let net: IpNet = self.value.parse().expect("canonical CIDR");
+                let n = self.address_count();
+                if net.addr().is_ipv4() && net.prefix_len() < 31 { n - 2 } else { n }
+            }
+            _ => 1,
+        }
+    }
+
+    /// Lazily expand to scan inputs: IPs for ip/cidr, the name itself for domains.
+    pub fn hosts(&self) -> Box<dyn Iterator<Item = String> + Send + '_> {
+        match self.kind {
+            TargetKind::Cidr => {
+                let net: IpNet = self.value.parse().expect("canonical CIDR");
+                Box::new(net.hosts().map(|ip| ip.to_string()))
+            }
+            _ => Box::new(std::iter::once(self.value.clone())),
+        }
+    }
+}
+
+/// Test helper: fixed-size batch number `index` (0-based).
+#[cfg(test)]
+pub fn batch(targets: &[Target], index: usize, size: usize) -> Vec<String> {
+    slice(targets, (index * size) as u128, size)
+}
+
+/// Up to `size` scan inputs starting at `offset` across all targets, in order.
+/// Deterministic for a given target list, so an offset checkpoint can resume a run.
+pub fn slice(targets: &[Target], offset: u128, size: usize) -> Vec<String> {
+    let mut skip = offset;
+    let mut out = Vec::with_capacity(size);
+    for t in targets {
+        let count = t.host_count();
+        if skip >= count {
+            skip -= count; // jump over whole targets without iterating them
+            continue;
+        }
+        out.extend(t.hosts().skip(skip as usize).take(size - out.len()));
+        skip = 0;
+        if out.len() == size {
+            break;
+        }
+    }
+    out
+}
+
+pub fn total_hosts(targets: &[Target]) -> u128 {
+    targets.iter().map(Target::host_count).sum()
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -129,6 +182,28 @@ mod tests {
     #[test]
     fn rejects_internet_wide_ranges() {
         assert_eq!(normalize("0.0.0.0/0"), Err(InputError::TooBroad(0, 8)));
+    }
+
+    #[test]
+    fn batches_cover_all_hosts_once() {
+        let targets = vec![
+            normalize("10.0.0.0/30").unwrap(), // 2 hosts
+            normalize("example.com").unwrap(), // 1
+            normalize("10.1.0.0/29").unwrap(), // 6 hosts
+        ];
+        assert_eq!(total_hosts(&targets), 9);
+        let all: Vec<String> = (0..4).flat_map(|i| batch(&targets, i, 4)).collect();
+        assert_eq!(all.len(), 9);
+        assert_eq!(&all[..3], ["10.0.0.1", "10.0.0.2", "example.com"]);
+        assert_eq!(batch(&targets, 1, 4), ["10.1.0.2", "10.1.0.3", "10.1.0.4", "10.1.0.5"]);
+        assert!(batch(&targets, 3, 4).is_empty());
+    }
+
+    #[test]
+    fn large_range_batch_is_cheap() {
+        // /12 = ~1M hosts: fetching a late batch must not materialize the range.
+        let t = vec![normalize("10.16.0.0/12").unwrap()];
+        assert_eq!(batch(&t, 4000, 256).len(), 256);
     }
 
     #[test]

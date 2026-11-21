@@ -193,7 +193,10 @@ IoT-устройство**, признаки **admin-панели / staging-ср
 
 - `users` — учётки, роль (RBAC), хэш пароля.
 - `targets` — нормализованные цели (ip/cidr/domain), теги, **ручные правки** (защищены от перезаписи сканом).
-- `scans` — прогон: конфиг окна/частоты, статус (running/stopped/failed/done), чекпоинт, таймстемпы.
+- `scans` — **описание** скана: цели, rate limit, окно, частота повтора, порты, размер батча, pre-flight.
+- `scan_runs` — **прогон** скана: статус, снимок целей, чекпоинт батча, окно/возобновление, статистика.
+  Diff сравнивает прогоны одного скана.
+- `run_artifacts` — сырой вывод nmap/naabu/httpx по батчам (зашифрован) — для DefectDojo и как evidence.
 - `hosts` — на прогон: адрес, активен/inactive, `miss_count`, время наблюдения.
 - `services` — порт/протокол/сервис/версия/`confidence`, ссылка на host+scan.
 - `http_findings` — title, status, headers(jsonb), cookies, tls(jsonb), redirects, tech, cms, favicon_hash.
@@ -229,9 +232,38 @@ IoT-устройство**, признаки **admin-панели / staging-ср
 - Ключ — из окружения/секрета, не в репозитории.
 
 ### 11.2 DefectDojo (вес в 20%)
-- Экспорт находок как **информационных findings + evidence** через DefectDojo API
-  (`/api/v2`, Swagger: https://demo.defectdojo.org/api/v2/oa3/swagger-ui/).
-- Маппинг наших находок → поля DefectDojo (title, severity=Info, description, endpoints, evidence).
+Проверено по живой схеме API demo.defectdojo.org (v3.5.201, 2026-11-21): у DefectDojo есть
+**встроенные парсеры ровно для нашего набора инструментов** — `Nmap Scan`, `Naabu Scan`,
+`httpx Scan`, `Nuclei Scan`, плюс `Generic Findings Import` для собственных находок.
+Поэтому в регламенте сказано «narzędzia jak nmap, które mogą integrować się z DefectDojo».
+
+- **Сырые выводы сканеров храним** (таблица `run_artifacts`, зашифровано) — по батчам и инструментам.
+- **Первый прогон** → `POST /api/v2/import-scan/` (multipart: `file`, `scan_type`, `product_name`,
+  `engagement_name`, `auto_create_context=true`, `minimum_severity=Info`).
+- **Следующие прогоны** → `POST /api/v2/reimport-scan/` с `close_old_findings=true`: DefectDojo сам
+  закрывает исчезнувшие находки — это вторая, независимая от нашего Diff Engine, история изменений.
+- Наши собственные наблюдения (админка, staging, CMS, срабатывания сигнатур, диффы) →
+  `Generic Findings Import` как **информационные findings / evidence** (то, что просит «mile widziany»).
+- nmap XML разных батчей перед отправкой сливаем в один `<nmaprun>`; JSONL (naabu/httpx/nuclei) — конкатенация.
+- Swagger: https://demo.defectdojo.org/api/v2/oa3/swagger-ui/
+
+### 11.4 Источники из регламента и что из них следует
+| Источник | Зачем нам |
+|----------|-----------|
+| DefectDojo API (Swagger выше) | формат и эндпоинты экспорта, см. §11.2 |
+| Документация Nmap (https://nmap.org/docs.html) | безопасные режимы: `-sT` (connect, без raw-сокетов), `-sV`, `--max-rate`, `--host-timeout`, `-iL`; XML-вывод (`-oX`) — тот самый формат, который понимает DefectDojo |
+| SecureCodeBox (https://www.securecodebox.io/docs/getting-started/installation) | **аналог, который заказчик сам называет неполным** — на презентации нужно чётко показать, чем мы лучше |
+
+**SecureCodeBox vs мы.** SecureCodeBox — оператор для **Kubernetes**: сканеры (nmap, nuclei, ZAP и др.)
+запускаются как ресурсы `Scan`/`ScheduledScan`, результаты уходят в DefectDojo через hook.
+Чем отличаемся (тезисы для слайда, перед защитой сверить с их документацией):
+- запуск одной командой `docker compose up`, без Kubernetes-кластера;
+- **временные окна** с авто-паузой и продолжением с чекпоинта в следующем окне;
+- **собственный diff прогонов** и дашборд изменений, статус Inactive по счётчику пропусков;
+- **RBAC на 4 роли** из регламента и шифрование чувствительных полей в БД;
+- DefectDojo — не единственное хранилище, а интеграция поверх нашей модели данных.
+
+Сам регламент и исходная схема лежат в `docs/`.
 
 ### 11.3 Пассивные источники (опционально)
 - Если на стенде дадут пассивные данные — подключаем как доп. вход (без активного скана).
