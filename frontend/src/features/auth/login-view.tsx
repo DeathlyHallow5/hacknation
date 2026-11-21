@@ -1,7 +1,6 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, KeyRound, LogIn, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import * as React from "react";
@@ -14,20 +13,16 @@ import { api } from "@/lib/api/endpoints";
 import { hilbertD2XY } from "@/lib/net";
 import { DEMO_USERS } from "@/lib/session";
 
-/** Decorative order-5 Hilbert curve: the address space as one continuous line. */
+/** Decorative order-5 Hilbert curve: the address space as one continuous line, no fake data on it. */
 function CurveArt() {
   const n = 32;
   const cell = 18;
-  const pts = Array.from({ length: n * n }, (_, d) => hilbertD2XY(n, d));
-  const path = pts.map(([x, y], i) => `${i ? "L" : "M"}${x * cell + cell / 2},${y * cell + cell / 2}`).join(" ");
-  const lit = [37, 38, 39, 101, 102, 233, 234, 235, 236, 410, 411, 588, 589, 590, 777, 778, 901, 902, 903, 1001];
+  const path = Array.from({ length: n * n }, (_, d) => hilbertD2XY(n, d))
+    .map(([x, y], i) => `${i ? "L" : "M"}${x * cell + cell / 2},${y * cell + cell / 2}`)
+    .join(" ");
   return (
     <svg viewBox={`0 0 ${n * cell} ${n * cell}`} className="size-full" aria-hidden preserveAspectRatio="xMidYMid slice">
       <path d={path} fill="none" stroke="var(--chrome-line)" strokeWidth="1.4" />
-      {lit.map((d) => {
-        const [x, y] = pts[d];
-        return <rect key={d} x={x * cell + 4} y={y * cell + 4} width={cell - 8} height={cell - 8} rx="2" fill={d % 3 === 0 ? "var(--map-new)" : d % 3 === 1 ? "var(--map-active)" : "var(--map-unstable)"} opacity="0.85" />;
-      })}
     </svg>
   );
 }
@@ -55,8 +50,9 @@ export function LoginView() {
 
   return (
     <div className="grid min-h-dvh bg-canvas lg:grid-cols-[1.15fr_1fr]">
-      <aside className="chrome-dots relative hidden overflow-hidden bg-chrome text-chrome-ink lg:flex lg:flex-col">
-        <div className="absolute inset-0 opacity-60 [mask-image:radial-gradient(70%_70%_at_70%_55%,black,transparent)]">
+      <aside className="relative hidden overflow-hidden bg-chrome text-chrome-ink lg:flex lg:flex-col">
+        {/* One texture: the address space as a single Hilbert line. Hidden in the contrast theme. */}
+        <div className="absolute inset-0 opacity-50 contrast:hidden">
           <CurveArt />
         </div>
         <div className="relative flex items-center gap-2.5 p-10">
@@ -64,10 +60,8 @@ export function LoginView() {
           <span className="text-lg font-extrabold tracking-tight">CBI AGH</span>
         </div>
         <div className="relative mt-auto max-w-xl p-10 pb-14">
-          <h1 className="text-[clamp(2.5rem,1.2rem+3vw,4rem)] leading-[1.02] font-extrabold tracking-[-0.03em]">Attack Surface Intelligence.</h1>
-          <p className="mt-5 max-w-md text-[1.0625rem] leading-relaxed text-chrome-ink-2">
-            Ciągły monitoring powierzchni ataku sieci uczelni: aktywne hosty, usługi, technologie i zmiany między kolejnymi skanami.
-          </p>
+          <h1 className="text-[clamp(2.5rem,1.2rem+3vw,4rem)] leading-[1.02] font-extrabold tracking-[-0.03em] text-balance">Attack Surface Intelligence.</h1>
+          <p className="mt-5 max-w-md text-lg leading-relaxed text-balance text-chrome-ink-2">Ciągły monitoring powierzchni ataku sieci uczelni.</p>
         </div>
       </aside>
 
@@ -79,7 +73,7 @@ export function LoginView() {
         </div>
         <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-8 px-6 py-12">
           <div className="grid gap-2">
-            <h2 className="text-2xl font-extrabold tracking-tight">Zaloguj się</h2>
+            <h2 className="text-2xl font-semibold">Zaloguj się</h2>
             <p className="text-sm text-ink-2">Użyj konta służbowego Centrum Bezpieczeństwa Informacji.</p>
           </div>
           <form
@@ -90,24 +84,10 @@ export function LoginView() {
             }}
           >
             <Field label="Login lub e-mail" htmlFor="login">
-              <div className="relative">
-                <UserRound className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-3" aria-hidden />
-                <Input id="login" autoComplete="username" value={login} onChange={(e) => setLogin(e.target.value)} className="h-11 pl-9" required />
-              </div>
+              <Input id="login" autoComplete="username" value={login} onChange={(e) => setLogin(e.target.value)} className="h-11" required />
             </Field>
             <Field label="Hasło" htmlFor="password">
-              <div className="relative">
-                <KeyRound className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-3" aria-hidden />
-                <Input
-                  id="password"
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="h-11 pl-9"
-                  required
-                />
-              </div>
+              <Input id="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className="h-11" required />
             </Field>
             {error ? (
               <p role="alert" className="rounded-lg bg-danger-soft px-3 py-2 text-sm font-semibold text-danger">
@@ -115,37 +95,39 @@ export function LoginView() {
               </p>
             ) : null}
             <Button type="submit" variant="primary" size="lg" disabled={pending !== null}>
-              {pending === "form" ? <Spinner /> : <LogIn />} Zaloguj się
+              {pending === "form" ? <Spinner /> : null} Zaloguj się
             </Button>
           </form>
 
+          {/* Demo accounts: a plain list under a rule, not a card of bordered buttons. */}
           {meta && meta.mode !== "proxy" ? (
-            <section className="grid gap-3 rounded-xl border border-line bg-surface p-4" aria-labelledby="demo-title">
+            <section className="grid gap-2 border-t border-line pt-6" aria-labelledby="demo-title">
               <div className="grid gap-0.5">
-                <h3 id="demo-title" className="text-sm font-bold">
+                <h3 id="demo-title" className="text-sm font-semibold">
                   Tryb demonstracyjny
                 </h3>
                 <p className="text-sm text-ink-2">Wejdź jako jedna z czterech ról, aby sprawdzić rozgraniczenie uprawnień.</p>
               </div>
-              <div className="grid gap-1.5">
+              <ul className="divide-y divide-line">
                 {DEMO_USERS.map((u) => (
-                  <button
-                    key={u.login}
-                    type="button"
-                    disabled={pending !== null}
-                    onClick={() => doLogin(u.login, "demo", u.login)}
-                    className="group flex items-center gap-3 rounded-lg border border-line px-3 py-2.5 text-left transition-colors hover:border-accent hover:bg-surface-2 disabled:opacity-60"
-                  >
-                    <span className="grid flex-1 leading-tight">
-                      <span className="text-sm font-semibold">{u.role}</span>
-                      <span className="text-sm text-ink-2">
-                        {u.name}, {u.hint.toLowerCase()}
+                  <li key={u.login}>
+                    <button
+                      type="button"
+                      disabled={pending !== null}
+                      onClick={() => doLogin(u.login, "demo", u.login)}
+                      className="group flex w-full items-center justify-between gap-3 rounded-sm py-2.5 text-left text-sm disabled:opacity-60"
+                    >
+                      <span>
+                        <span className="font-semibold group-hover:text-link group-hover:underline">{u.role}:</span>{" "}
+                        <span className="text-ink-2">
+                          {u.name}, {u.hint}
+                        </span>
                       </span>
-                    </span>
-                    {pending === u.login ? <Spinner /> : <ArrowRight className="size-4 text-ink-3 transition-transform group-hover:translate-x-0.5 group-hover:text-link" aria-hidden />}
-                  </button>
+                      {pending === u.login ? <Spinner /> : null}
+                    </button>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </section>
           ) : null}
         </div>

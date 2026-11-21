@@ -9,8 +9,8 @@ import YAML from "yaml";
 import { ErrorState, Guard, SearchInput, TagInput, useDebouncedValue } from "@/components/data/bits";
 import { Container, PageHeader } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
-import { Field, Input, Segmented, Slider, Switch, Textarea } from "@/components/ui/form-controls";
-import { Chip, Panel, Skeleton, Spinner } from "@/components/ui/misc";
+import { Field, Input, Segmented, Slider, SwitchRow, Textarea } from "@/components/ui/form-controls";
+import { DefinitionList, Panel, Skeleton, Spinner } from "@/components/ui/misc";
 import { ConfirmDialog } from "@/components/ui/overlays";
 import { SimpleSelect } from "@/components/ui/select";
 import { categoryLabel } from "@/features/signatures/signatures-view";
@@ -46,7 +46,7 @@ function localSafety(sig: SignatureInput): string[] {
     if (c.type === "path") {
       const p = c.path ?? "";
       if (!p.startsWith("/")) issues.push(`Warunek ${n}: ścieżka musi zaczynać się od „/”.`);
-      if (p.includes("?")) issues.push(`Warunek ${n}: bez parametrów zapytania — tylko proste GET.`);
+      if (p.includes("?")) issues.push(`Warunek ${n}: bez parametrów zapytania, tylko proste GET.`);
       if (/(\.\.|[\s'"<>;`]|\bunion\b|\bselect\b)/i.test(p)) issues.push(`Warunek ${n}: znaki typowe dla ataku są niedozwolone.`);
       if (/(pass(word)?|pwd|token|login|user(name)?)=/i.test(p)) issues.push(`Warunek ${n}: ścieżka nie może przekazywać danych logowania.`);
     }
@@ -63,12 +63,38 @@ function localSafety(sig: SignatureInput): string[] {
   return issues;
 }
 
+/** A condition as one sentence for read-only views: label in sans, the machine values in mono. */
+function ConditionText({ c }: { c: SignatureCondition }) {
+  const code = (v: React.ReactNode) => <code className="mono text-ink">{v}</code>;
+  if (c.type === "path")
+    return (
+      <>
+        {CONDITION_TYPE_LABEL.path} {code(c.path)}
+        {c.expect_status ? (
+          <>
+            , oczekiwany kod <span className="tabular">{c.expect_status}</span>
+          </>
+        ) : null}
+        {c.value ? <>, treść zawiera {code(c.value)}</> : null}
+      </>
+    );
+  if (c.type === "version") return <>{CONDITION_TYPE_LABEL.version}: wyrażenie {code(c.extract)}</>;
+  return (
+    <>
+      {CONDITION_TYPE_LABEL[c.type]}
+      {c.name ? <> {code(c.name)}</> : null} {CONDITION_OP_LABEL[c.op]}
+      {c.op !== "exists" && c.value ? <> {code(c.value)}</> : null}
+    </>
+  );
+}
+
+/** Editable condition: a section under a hairline, not a card inside the panel. */
 function ConditionRow({ c, index, onChange, onRemove, readOnly }: { c: SignatureCondition; index: number; onChange: (c: SignatureCondition) => void; onRemove: () => void; readOnly: boolean }) {
   const needsName = c.type === "header" || c.type === "cookie";
   return (
-    <li className="grid gap-3 rounded-xl border border-line bg-surface-2 p-3">
+    <li className="grid gap-3 border-t border-line pt-4 first:border-t-0 first:pt-0">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-bold text-ink-2">Warunek {index + 1}</span>
+        <span className="text-xs font-semibold text-ink-2">Warunek {index + 1}</span>
         {!readOnly ? (
           <Button size="icon-sm" variant="ghost" aria-label={`Usuń warunek ${index + 1}`} onClick={onRemove}>
             <X />
@@ -144,7 +170,7 @@ function Tester({ sig }: { sig: SignatureInput }) {
     }
   };
   return (
-    <Panel title="Testuj sygnaturę" description="Sprawdź regułę na usłudze z inwentarza lub na wklejonej odpowiedzi HTTP. Test nie wysyła ruchu do sieci.">
+    <Panel title="Testuj sygnaturę" description="Test nie wysyła ruchu do sieci.">
       <div className="grid gap-4">
         <Segmented
           aria-label="Źródło testu"
@@ -165,11 +191,12 @@ function Tester({ sig }: { sig: SignatureInput }) {
               {(services.data?.items ?? []).map((s) => (
                 <li key={s.id}>
                   <button type="button" onClick={() => setServiceId(s.id)} aria-pressed={serviceId === s.id} className={cn("grid w-full gap-0.5 px-3 py-2 text-left text-sm hover:bg-surface-2", serviceId === s.id && "bg-accent/10")}>
-                    <span className="mono font-semibold">
+                    <span className="mono font-medium">
                       {s.ip}:{s.port}
                     </span>
                     <span className="truncate text-xs text-ink-2">
-                      {s.technologies.slice(0, 2).join(", ") || s.product} {s.title ? `— „${s.title}”` : ""}
+                      {s.technologies.slice(0, 2).join(", ") || s.product}
+                      {s.title ? `, „${s.title}”` : ""}
                     </span>
                   </button>
                 </li>
@@ -196,21 +223,25 @@ function Tester({ sig }: { sig: SignatureInput }) {
         </Guard>
         {result ? (
           <div className="grid gap-3" aria-live="polite">
-            <div className={cn("flex items-center gap-2 rounded-lg p-3 font-bold", result.matched ? "bg-success-soft text-success" : "bg-surface-3 text-ink")}>
-              {result.matched ? <CircleCheck className="size-5" aria-hidden /> : <CircleX className="size-5" aria-hidden />}
+            <div className="flex items-center gap-2 rounded-lg bg-surface-2 p-3 font-semibold text-ink contrast:border contrast:border-line">
+              {result.matched ? <CircleCheck className="size-5 shrink-0" aria-hidden /> : <CircleX className="size-5 shrink-0 text-ink-2" aria-hidden />}
               {result.matched ? `Dopasowano: ${result.target_label}` : `Brak dopasowania: ${result.target_label}`}
             </div>
             <ul className="grid gap-1.5 text-sm">
               {result.conditions.map((c) => (
                 <li key={c.index} className="flex items-start gap-2">
-                  {c.matched ? <CircleCheck className="mt-0.5 size-4 shrink-0 text-success" aria-label="spełniony" /> : <CircleX className="mt-0.5 size-4 shrink-0 text-ink-3" aria-label="niespełniony" />}
+                  {c.matched ? <CircleCheck className="mt-0.5 size-4 shrink-0 text-ink" aria-label="spełniony" /> : <CircleX className="mt-0.5 size-4 shrink-0 text-ink-2" aria-label="niespełniony" />}
                   <span>
                     Warunek {c.index + 1}: {c.matched ? <code className="mono rounded bg-accent/15 px-1 text-xs">{c.evidence}</code> : <span className="text-ink-2">niespełniony</span>}
                   </span>
                 </li>
               ))}
             </ul>
-            {result.extracted_version ? <Chip tone="accent">Wykryta wersja: {result.extracted_version}</Chip> : null}
+            {result.extracted_version ? (
+              <p className="text-sm">
+                Wykryta wersja: <code className="mono">{result.extracted_version}</code>
+              </p>
+            ) : null}
             {!result.safety.ok ? (
               <div className="rounded-lg border border-danger/40 bg-danger-soft p-3 text-sm text-danger">
                 {result.safety.issues.map((i) => (
@@ -288,10 +319,16 @@ function EditorBody({ id, isNew, existing: existingData, initial }: { id: string
         title={isNew ? "Nowa sygnatura" : sig.name || existing.data?.name}
         description={
           isNew
-            ? "Opisz cechę, którą skaner ma rozpoznać. Reguła jest sprawdzana pod kątem bezpieczeństwa przed zapisem."
+            ? "Przed zapisem reguła przechodzi kontrolę bezpieczeństwa."
             : `${builtin ? "Sygnatura wbudowana" : `Sygnatura własna, autor: ${existing.data?.author}`}. Wersja ${existing.data?.version}, zmieniona ${fmtRelative(existing.data?.updated_at)}.`
         }
-        meta={!isNew ? <Chip tone="outline">Dopasowania w ostatnim skanie: {existing.data?.matches_last_scan}</Chip> : null}
+        meta={
+          !isNew ? (
+            <span>
+              Dopasowania w ostatnim skanie: <span className="tabular text-ink">{existing.data?.matches_last_scan}</span>
+            </span>
+          ) : null
+        }
         actions={
           <>
             {!isNew ? (
@@ -319,13 +356,27 @@ function EditorBody({ id, isNew, existing: existingData, initial }: { id: string
         }
       />
       {builtin ? (
-        <p className="mb-6 rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm">
+        <p className="-mt-2 mb-6 max-w-[65ch] text-sm text-pretty text-ink-2">
           Sygnatury wbudowane można tylko włączać i wyłączać na liście. Aby zmienić warunki, utwórz kopię jako sygnaturę własną.
         </p>
       ) : null}
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
         <div className="grid gap-6">
           <Panel title="Opis">
+            {readOnly ? (
+              // Read-only is shown as data, not as a greyed-out form.
+              <DefinitionList
+                items={[
+                  { label: "Nazwa", value: sig.name },
+                  { label: "Opis", value: sig.description || "—" },
+                  { label: "Kategoria", value: categoryLabel(sig.category) },
+                  { label: "Rozpoznawana technologia", value: sig.technology ?? "—" },
+                  { label: "Wpływ na priorytet", value: <span className="tabular">+{sig.score_weight} pkt</span> },
+                  { label: "Tagi", value: sig.tags.length ? sig.tags.join(", ") : "—" },
+                  { label: "Stan", value: sig.enabled ? "aktywna" : "wyłączona" },
+                ]}
+              />
+            ) : (
             <div className="grid gap-4">
               <Field label="Nazwa" htmlFor="sig-name">
                 <Input id="sig-name" disabled={readOnly} value={sig.name} onChange={(e) => setSig({ ...sig, name: e.target.value })} placeholder="np. Panel administracyjny Grafany" />
@@ -347,40 +398,54 @@ function EditorBody({ id, isNew, existing: existingData, initial }: { id: string
               <Field label="Tagi" htmlFor="sig-tags">
                 <TagInput id="sig-tags" value={sig.tags} onChange={(tags) => setSig({ ...sig, tags })} />
               </Field>
-              <label className="flex items-center justify-between gap-3 rounded-lg border border-line p-3 text-sm font-semibold">
-                Sygnatura aktywna
-                <Switch disabled={readOnly} checked={sig.enabled} onCheckedChange={(enabled) => setSig({ ...sig, enabled })} />
-              </label>
+              <SwitchRow label="Sygnatura aktywna" checked={sig.enabled} onCheckedChange={(enabled) => setSig({ ...sig, enabled })} className="border-t border-line pt-4" />
             </div>
+            )}
           </Panel>
           <Panel
             title="Warunki dopasowania"
+            description={readOnly ? (sig.match.operator === "and" ? "Wszystkie muszą być spełnione (AND)" : "Wystarczy dowolny (OR)") : undefined}
             actions={
-              <Segmented
-                aria-label="Łączenie warunków"
-                size="sm"
-                value={sig.match.operator}
-                onChange={(operator) => !readOnly && setSig({ ...sig, match: { ...sig.match, operator } })}
-                options={[
-                  { value: "and", label: "Wszystkie (AND)" },
-                  { value: "or", label: "Dowolny (OR)" },
-                ]}
-              />
+              readOnly ? null : (
+                <Segmented
+                  aria-label="Łączenie warunków"
+                  size="sm"
+                  value={sig.match.operator}
+                  onChange={(operator) => setSig({ ...sig, match: { ...sig.match, operator } })}
+                  options={[
+                    { value: "and", label: "Wszystkie (AND)" },
+                    { value: "or", label: "Dowolny (OR)" },
+                  ]}
+                />
+              )
             }
           >
-            <div className="grid gap-3">
-              <ul className="grid gap-3">
-                {sig.match.conditions.map((c, i) => (
-                  <ConditionRow
-                    key={i}
-                    c={c}
-                    index={i}
-                    readOnly={readOnly}
-                    onChange={(nc) => setCond(i, nc)}
-                    onRemove={() => setSig({ ...sig, match: { ...sig.match, conditions: sig.match.conditions.filter((_, j) => j !== i) } })}
-                  />
-                ))}
-              </ul>
+            <div className="grid gap-4">
+              {readOnly ? (
+                <ol className="grid divide-y divide-line text-sm">
+                  {sig.match.conditions.map((c, i) => (
+                    <li key={i} className="grid gap-0.5 py-2.5 first:pt-0">
+                      <span className="text-xs font-semibold text-ink-2">Warunek {i + 1}</span>
+                      <span className="leading-relaxed">
+                        <ConditionText c={c} />
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <ul className="grid gap-4">
+                  {sig.match.conditions.map((c, i) => (
+                    <ConditionRow
+                      key={i}
+                      c={c}
+                      index={i}
+                      readOnly={readOnly}
+                      onChange={(nc) => setCond(i, nc)}
+                      onRemove={() => setSig({ ...sig, match: { ...sig.match, conditions: sig.match.conditions.filter((_, j) => j !== i) } })}
+                    />
+                  ))}
+                </ul>
+              )}
               {!readOnly ? (
                 <Button
                   variant="secondary"
@@ -391,9 +456,10 @@ function EditorBody({ id, isNew, existing: existingData, initial }: { id: string
                   <Plus /> Dodaj warunek
                 </Button>
               ) : null}
-              <div className={cn("grid gap-1.5 rounded-lg p-3 text-sm", issues.length ? "bg-danger-soft text-danger" : "bg-success-soft text-success")} aria-live="polite">
-                <span className="flex items-center gap-2 font-bold">
-                  {issues.length ? <ShieldAlert className="size-4" aria-hidden /> : <ShieldCheck className="size-4" aria-hidden />}
+              {/* Red only when there is something to fix; the safe state is a quiet line. */}
+              <div className={cn("grid gap-1.5 text-sm", issues.length ? "rounded-lg bg-danger-soft p-3 text-danger contrast:border contrast:border-current" : "text-ink-2")} aria-live="polite">
+                <span className={cn("flex items-center gap-2", issues.length && "font-semibold")}>
+                  {issues.length ? <ShieldAlert className="size-4 shrink-0" aria-hidden /> : <ShieldCheck className="size-4 shrink-0" aria-hidden />}
                   {issues.length ? "Reguła wymaga poprawek" : "Reguła jest bezpieczna: tylko pasywne sprawdzenia GET/HEAD"}
                 </span>
                 {issues.map((i) => (
@@ -406,7 +472,8 @@ function EditorBody({ id, isNew, existing: existingData, initial }: { id: string
         <div className="grid gap-6">
           <Tester sig={sig} />
           <Panel title="Podgląd YAML" description="Format importu i eksportu sygnatur.">
-            <pre className="mono scroll-quiet max-h-96 overflow-auto rounded-lg bg-chrome p-4 text-xs leading-relaxed text-chrome-ink">{yaml}</pre>
+            {/* Long regex lines soft-wrap inside the column instead of scrolling sideways. */}
+            <pre className="mono scroll-quiet max-h-96 overflow-y-auto rounded-lg bg-chrome p-4 text-xs leading-relaxed whitespace-pre-wrap text-chrome-ink [overflow-wrap:anywhere]">{yaml}</pre>
           </Panel>
         </div>
       </div>

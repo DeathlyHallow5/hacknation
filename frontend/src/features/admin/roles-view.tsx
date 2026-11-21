@@ -1,21 +1,22 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Lock, Minus, Plus, Trash2 } from "lucide-react";
+import { Check, Minus, Plus, Trash2 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { ErrorState, Guard } from "@/components/data/bits";
+import { DataTable, type Column } from "@/components/data/data-table";
 import { Container, PageHeader } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Checkbox, Field, Input, Textarea } from "@/components/ui/form-controls";
-import { Chip, Panel, Skeleton } from "@/components/ui/misc";
+import { Panel } from "@/components/ui/misc";
 import { ConfirmDialog, Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/overlays";
 import { errorMessage } from "@/lib/api/client";
 import { api } from "@/lib/api/endpoints";
 import type { Permission, Role } from "@/lib/api/types";
+import { countLabel } from "@/lib/format";
 import { PERMISSION_GROUPS } from "@/lib/permissions";
 import { useCan } from "@/lib/session";
-import { cn } from "@/lib/utils";
 
 function RoleSheet({ role, open, onOpenChange }: { role: Role | null; open: boolean; onOpenChange: (o: boolean) => void }) {
   return (
@@ -45,7 +46,7 @@ function RoleForm({ role, onOpenChange }: { role: Role | null; onOpenChange: (o:
       if (editing) await api.roles.update(role.id, { name, description, permissions: [...perms] });
       else await api.roles.create({ name, description, permissions: [...perms] });
       qc.invalidateQueries({ queryKey: ["roles"] });
-      toast.success(editing ? "Zapisano rolę" : "Utworzono rolę", { description: `${name}: ${perms.size} uprawnień` });
+      toast.success(editing ? "Zapisano rolę" : "Utworzono rolę", { description: `${name}: ${countLabel(perms.size, ["uprawnienie", "uprawnienia", "uprawnień"])}` });
       onOpenChange(false);
     } catch (e) {
       toast.error("Nie udało się zapisać roli", { description: errorMessage(e) });
@@ -55,7 +56,7 @@ function RoleForm({ role, onOpenChange }: { role: Role | null; onOpenChange: (o:
     <>
         <SheetHeader>
           <SheetTitle>{editing ? `Edytuj rolę: ${role.name}` : "Nowa rola"}</SheetTitle>
-          <SheetDescription>Wybierz uprawnienia. API sprawdza je przy każdym żądaniu — interfejs tylko ukrywa i blokuje niedostępne działania.</SheetDescription>
+          <SheetDescription>API sprawdza uprawnienia przy każdym żądaniu; interfejs tylko ukrywa i blokuje niedostępne działania.</SheetDescription>
         </SheetHeader>
         <SheetBody className="grid content-start gap-5">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -66,43 +67,46 @@ function RoleForm({ role, onOpenChange }: { role: Role | null; onOpenChange: (o:
               <Textarea id="role-desc" value={description} onChange={(e) => setDescription(e.target.value)} className="min-h-9" />
             </Field>
           </div>
-          <div className="grid gap-4">
+          {/* Permission groups as sections under hairlines, not boxed fieldsets. */}
+          <div className="grid">
             {PERMISSION_GROUPS.map((g) => {
               const all = g.items.every((i) => perms.has(i.key));
               return (
-                <fieldset key={g.resource} className="grid gap-2 rounded-xl border border-line p-3">
-                  <legend className="flex items-center gap-2 px-1 text-sm font-bold">
-                    {g.label}
-                    <button
-                      type="button"
-                      className="text-xs font-semibold text-link hover:underline"
-                      onClick={() =>
-                        setPerms((prev) => {
-                          const next = new Set(prev);
-                          g.items.forEach((i) => (all ? next.delete(i.key) : next.add(i.key)));
-                          return next;
-                        })
-                      }
-                    >
-                      {all ? "odznacz" : "zaznacz wszystkie"}
-                    </button>
-                  </legend>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {g.items.map((i) => (
-                      <label key={i.key} className="flex items-center gap-2 text-sm">
-                        <Checkbox checked={perms.has(i.key)} onCheckedChange={() => toggle(i.key)} />
-                        {i.label}
-                        <code className="mono ml-auto text-xs text-ink-3">{i.key}</code>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
+                <div key={g.resource} className="border-t border-line py-4">
+                  <fieldset className="grid gap-2">
+                    <legend className="mb-2 flex items-center gap-3 text-sm font-semibold">
+                      {g.label}
+                      <button
+                        type="button"
+                        className="text-xs font-semibold text-link hover:underline"
+                        onClick={() =>
+                          setPerms((prev) => {
+                            const next = new Set(prev);
+                            g.items.forEach((i) => (all ? next.delete(i.key) : next.add(i.key)));
+                            return next;
+                          })
+                        }
+                      >
+                        {all ? "odznacz" : "zaznacz wszystkie"}
+                      </button>
+                    </legend>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {g.items.map((i) => (
+                        <label key={i.key} className="flex items-center gap-2 text-sm">
+                          <Checkbox checked={perms.has(i.key)} onCheckedChange={() => toggle(i.key)} />
+                          {i.label}
+                          <code className="mono ml-auto text-xs text-ink-2">{i.key}</code>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                </div>
               );
             })}
           </div>
         </SheetBody>
         <SheetFooter>
-          <span className="mr-auto text-sm text-ink-2">Wybrano {perms.size} uprawnień</span>
+          <span className="mr-auto text-sm text-ink-2">Wybrano {countLabel(perms.size, ["uprawnienie", "uprawnienia", "uprawnień"])}</span>
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Anuluj
           </Button>
@@ -122,11 +126,50 @@ export function RolesView() {
   const [toDelete, setToDelete] = React.useState<Role | null>(null);
   const list = roles.data ?? [];
 
+  const roleColumns: Column<Role>[] = [
+    {
+      key: "name",
+      header: "Rola",
+      cell: (r) => (
+        <div className="grid gap-0.5">
+          <span className="font-semibold">{r.name}</span>
+          <span className="text-xs text-ink-2">
+            {r.builtin ? "wbudowana" : "własna"}
+            {/* Phones: the two counts move here instead of taking two columns. */}
+            <span className="sm:hidden">
+              , {countLabel(r.permissions.length, ["uprawnienie", "uprawnienia", "uprawnień"])}, {countLabel(r.users_count, ["użytkownik", "użytkownicy", "użytkowników"])}
+            </span>
+          </span>
+        </div>
+      ),
+    },
+    { key: "desc", header: "Opis", hideBelow: "md", cell: (r) => <span className="block max-w-2xl text-sm text-pretty text-ink-2">{r.description}</span> },
+    { key: "perms", header: "Uprawnienia", hideBelow: "sm", className: "tabular text-right", headerClassName: "text-right", cell: (r) => r.permissions.length },
+    { key: "users", header: "Użytkownicy", hideBelow: "sm", className: "tabular text-right", headerClassName: "text-right", cell: (r) => r.users_count },
+    {
+      key: "actions",
+      header: <span className="sr-only">Akcje</span>,
+      cell: (r) =>
+        can("roles:manage") ? (
+          <div className="flex flex-wrap justify-end gap-1">
+            <Button size="sm" variant="ghost" onClick={() => setSheet({ role: r })}>
+              {r.builtin ? "Utwórz kopię" : "Edytuj"}
+            </Button>
+            {!r.builtin ? (
+              <Button size="icon-sm" variant="ghost" aria-label={`Usuń rolę ${r.name}`} onClick={() => setToDelete(r)}>
+                <Trash2 />
+              </Button>
+            ) : null}
+          </div>
+        ) : null,
+    },
+  ];
+
   return (
     <Container className="pb-12">
       <PageHeader
         title="Role i uprawnienia"
-        description="Cztery role wbudowane odpowiadają wymaganiom: Administracja; Dodawanie, usuwanie, modyfikacja; Modyfikacja i odczyt; Odczyt. Możesz tworzyć role własne o dowolnym zestawie uprawnień."
+        description="Role wbudowane można tylko skopiować; role własne edytujesz dowolnie."
         actions={
           <Guard permission="roles:manage">
             <Button variant="primary" onClick={() => setSheet({ role: null })}>
@@ -136,41 +179,20 @@ export function RolesView() {
         }
       />
       {roles.isError ? <ErrorState error={roles.error} onRetry={() => roles.refetch()} /> : null}
-      <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        {list.map((r) => (
-          <article key={r.id} className="grid content-start gap-2 rounded-xl border border-line bg-surface p-4">
-            <div className="flex items-start justify-between gap-2">
-              <h3 className="font-bold">{r.name}</h3>
-              {r.builtin ? <Lock className="size-4 text-ink-3" aria-label="rola wbudowana" /> : <Chip tone="accent">własna</Chip>}
-            </div>
-            <p className="text-sm leading-snug text-ink-2">{r.description}</p>
-            <p className="text-xs text-ink-2">
-              {r.permissions.length} uprawnień, {r.users_count} {r.users_count === 1 ? "użytkownik" : "użytkowników"}
-            </p>
-            {can("roles:manage") ? (
-              <div className="mt-1 flex gap-1">
-                <Button size="sm" variant="ghost" onClick={() => setSheet({ role: r })}>
-                  {r.builtin ? "Utwórz kopię" : "Edytuj"}
-                </Button>
-                {!r.builtin ? (
-                  <Button size="icon-sm" variant="ghost" aria-label={`Usuń rolę ${r.name}`} onClick={() => setToDelete(r)}>
-                    <Trash2 />
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
-          </article>
-        ))}
-        {!roles.data ? [0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-40 rounded-xl" />) : null}
-      </div>
-      <Panel title="Macierz uprawnień" description="Kto co może. Te same reguły egzekwuje API (odpowiedź 403 z nazwą brakującego uprawnienia)." flush>
+      {/* Roles are records, so they are a table above the matrix, not a row of identical cards. */}
+      <Panel title="Role" flush className="mb-6">
+        <DataTable columns={roleColumns} rows={roles.data} getId={(r) => r.id} loading={roles.isFetching && !roles.data} skeletonRows={5} caption="Role" />
+      </Panel>
+      <Panel title="Macierz uprawnień" description="API egzekwuje te same reguły (403 z nazwą brakującego uprawnienia)." flush>
         <div className="scroll-quiet relative overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-line bg-surface-2 text-left text-sm text-ink-2">
-                <th scope="col" className="px-4 py-2.5 font-semibold">Uprawnienie</th>
+              <tr className="border-b border-line bg-surface-2 text-left text-xs text-ink-2">
+                <th scope="col" className="sticky left-0 z-10 bg-surface-2 py-2.5 pr-4 pl-5 font-semibold max-md:shadow-[1px_0_0_var(--line)]">
+                  Uprawnienie
+                </th>
                 {list.map((r) => (
-                  <th key={r.id} scope="col" className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">
+                  <th key={r.id} scope="col" className="px-3 py-2.5 text-center font-semibold whitespace-nowrap last:pr-5">
                     {r.name}
                   </th>
                 ))}
@@ -180,24 +202,21 @@ export function RolesView() {
               {PERMISSION_GROUPS.map((g) => (
                 <React.Fragment key={g.resource}>
                   <tr className="border-b border-line bg-surface-2/60">
-                    <th colSpan={list.length + 1} scope="colgroup" className="px-4 py-2 text-left text-xs font-bold tracking-wide text-ink-2">
+                    <th colSpan={list.length + 1} scope="colgroup" className="py-2 pr-4 pl-5 text-left text-xs font-semibold text-ink-2">
                       {g.label}
                     </th>
                   </tr>
                   {g.items.map((i) => (
                     <tr key={i.key} className="border-b border-line last:border-0">
-                      <th scope="row" className="px-4 py-2 text-left font-normal">
-                        {i.label} <code className="mono ml-1 text-xs text-ink-3">{i.key}</code>
+                      {/* The permission name stays pinned while a narrow screen scrolls through the role columns. */}
+                      <th scope="row" className="sticky left-0 z-10 bg-surface py-2 pr-4 pl-5 text-left font-normal max-md:min-w-44 max-md:shadow-[1px_0_0_var(--line)]">
+                        {i.label} <code className="mono ml-1 text-xs text-ink-2 max-md:block max-md:ml-0">{i.key}</code>
                       </th>
                       {list.map((r) => {
                         const has = r.permissions.includes(i.key);
                         return (
-                          <td key={r.id} className="px-3 py-2 text-center">
-                            {has ? (
-                              <Check className={cn("mx-auto size-4 text-success")} strokeWidth={3} aria-label="tak" />
-                            ) : (
-                              <Minus className="mx-auto size-4 text-ink-3" aria-label="nie" />
-                            )}
+                          <td key={r.id} className="px-3 py-2 text-center last:pr-5">
+                            {has ? <Check className="mx-auto size-4 text-ink" strokeWidth={3} aria-label="tak" /> : <Minus className="mx-auto size-4 text-ink-3" aria-label="nie" />}
                           </td>
                         );
                       })}

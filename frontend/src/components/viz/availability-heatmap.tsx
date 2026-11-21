@@ -124,7 +124,7 @@ export function AvailabilityHeatmap({
         <ChartTooltip tip={tip} containerWidth={width} />
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-ink-2">
-        <span className="inline-flex items-center gap-2">
+        <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
           0%
           <span className="flex gap-0.5" aria-hidden>
             {Array.from({ length: STEPS }).map((_, i) => (
@@ -134,9 +134,9 @@ export function AvailabilityHeatmap({
           100% odpowiedzi
         </span>
       </div>
-      <p className="rounded-lg bg-surface-2 px-3 py-2.5 text-sm leading-relaxed text-ink">
-        W oknie 22:00–06:00 hosty niestabilne odpowiadają średnio w <strong>{fmtPercent(winAvg)}</strong> przypadków, a w dni robocze
-        8:00–19:00 — w <strong>{fmtPercent(dayAvg)}</strong>. Nocny skan ich nie widzi: dla tej grupy warto utrzymać pomiary kontrolne w dzień.
+      <p className="rounded-lg bg-surface-2 px-3 py-2.5 text-sm leading-relaxed text-pretty text-ink">
+        W oknie 22:00–06:00 hosty niestabilne odpowiadają średnio w <strong className="font-semibold">{fmtPercent(winAvg)}</strong> przypadków, a w dni robocze
+        między 8:00 a 19:00 w <strong className="font-semibold">{fmtPercent(dayAvg)}</strong>. Nocny skan ich nie widzi: dla tej grupy warto utrzymać pomiary kontrolne w dzień.
       </p>
     </div>
   );

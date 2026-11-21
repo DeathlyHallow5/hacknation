@@ -38,8 +38,8 @@ export function ChangesTimeline({
   height?: number;
   selected?: number | null;
   onSelect?: (p: ChangesTimelinePoint) => void;
-  /** false when the page already shows the four kinds (e.g. as filter buttons). */
-  legend?: boolean;
+  /** true: built-in legend; false: none; a node: the page's own legend (e.g. filter buttons) in the same row as "Tabela". */
+  legend?: boolean | React.ReactNode;
 }) {
   const [ref, width] = useWidth<HTMLDivElement>(640);
   const [hover, setHover] = React.useState<number | null>(null);
@@ -83,13 +83,13 @@ export function ChangesTimeline({
   return (
     <div className="grid min-w-0 grid-cols-1 gap-3">
       <div className={cn("flex flex-wrap items-center gap-3", legend ? "justify-between" : "justify-end")}>
-        {legend ? (
+        {legend === true ? (
           <div className="flex flex-wrap gap-x-4 gap-y-1.5" aria-label="Legenda">
             {KIND_ORDER.map((k) => (
               <LegendItem key={k} color={KIND_COLOR[k]} label={CHANGE_LABEL_PLURAL[k]} />
             ))}
           </div>
-        ) : null}
+        ) : legend || null}
         <Button size="sm" variant="ghost" onClick={() => setTable((t) => !t)} aria-pressed={table}>
           <Table2 /> {table ? "Wykres" : "Tabela"}
         </Button>
@@ -177,7 +177,7 @@ export function ChangesTimeline({
                     aria-label={`Skan ${p.scan_number}: ${KIND_ORDER.map((k) => countLabel(p[k], CHANGE_COUNT_FORMS[k])).join(", ")}`}
                   />
                   {i % Math.ceil(n / 8) === 0 || i === n - 1 ? (
-                    <text x={left + i * slot + slot / 2} y={height - 6} textAnchor="middle" className={cn("text-[11px] tabular", i === n - 1 ? "fill-ink font-bold" : "fill-ink-2")}>
+                    <text x={left + i * slot + slot / 2} y={height - 6} textAnchor="middle" className={cn("text-[11px] tabular", i === n - 1 ? "fill-ink font-semibold" : "fill-ink-2")}>
                       #{p.scan_number}
                     </text>
                   ) : null}
