@@ -75,12 +75,64 @@ fn v1_routes() -> Router<AppState> {
         )
         .route("/api/v1/targets/bulk", post(v1::bulk_targets))
         .route("/api/v1/targets/{id}", get(v1::get_target).patch(v1::update_target).delete(v1::delete_target))
-        .route("/api/v1/scans", get(v1::list_scans))
         .route("/api/v1/findings", get(v1::list_findings))
         .route("/api/v1/findings/export", get(v1::export_findings))
-        .route("/api/v1/findings/defectdojo", post(v1::defectdojo_export))
         .route("/api/v1/findings/{id}", get(v1::get_finding).patch(v1::update_finding))
         .route("/api/v1/audit", get(v1::audit_list))
+        .route("/api/v1/findings/defectdojo", post(crate::v1_admin::dojo_export))
+        .route("/api/v1/findings/bulk", post(crate::v1_assets::findings_bulk))
+        .route("/api/v1/users", get(crate::v1_admin::list_users).post(crate::v1_admin::create_user))
+        .route("/api/v1/users/{id}", patch(crate::v1_admin::update_user).delete(crate::v1_admin::remove_user))
+        .route("/api/v1/roles", get(crate::v1_admin::list_roles).post(crate::v1_admin::roles_fixed))
+        .route("/api/v1/roles/{id}", patch(crate::v1_admin::roles_fixed).delete(crate::v1_admin::roles_fixed))
+        .route("/api/v1/settings", get(crate::v1_admin::get_settings).patch(crate::v1_admin::update_settings))
+        .route("/api/v1/security/encryption", get(crate::v1_admin::encryption))
+        .route("/api/v1/security/encryption/rotate", post(crate::v1_admin::rotate_key))
+        .route("/api/v1/engines", get(crate::v1_admin::engines))
+        .route("/api/v1/integrations/defectdojo", get(crate::v1_admin::dojo_get).put(crate::v1_admin::dojo_put))
+        .route("/api/v1/integrations/defectdojo/test", post(crate::v1_admin::dojo_test))
+        .route("/api/v1/integrations/defectdojo/exports", get(crate::v1_admin::dojo_exports))
+        .route("/api/v1/scans", get(crate::v1_scans::list).post(crate::v1_scans::create_scan))
+        .route("/api/v1/scans/estimate", post(crate::v1_scans::estimate))
+        .route(
+            "/api/v1/scans/import",
+            post(crate::v1_scans::import).layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)),
+        )
+        .route(
+            "/api/v1/scans/{id}",
+            get(crate::v1_scans::get_scan).patch(crate::v1_scans::update_scan).delete(crate::v1_scans::delete_scan),
+        )
+        .route("/api/v1/scans/{id}/batches", get(crate::v1_scans::batches))
+        .route("/api/v1/scans/{id}/logs", get(crate::v1_scans::logs))
+        .route("/api/v1/scans/{id}/events", get(crate::v1_scans::events))
+        .route("/api/v1/scans/{id}/export", get(crate::v1_scans::export))
+        .route("/api/v1/scans/{id}/{action}", post(crate::v1_scans::control))
+        .route("/api/v1/profiles", get(crate::v1_scans::list_profiles).post(crate::v1_scans::create_profile))
+        .route("/api/v1/profiles/{id}", patch(crate::v1_scans::update_profile).delete(crate::v1_scans::delete_profile))
+        .route("/api/v1/schedules", get(crate::v1_scans::list_schedules).post(crate::v1_scans::create_schedule))
+        .route(
+            "/api/v1/schedules/{id}",
+            patch(crate::v1_scans::update_schedule).delete(crate::v1_scans::delete_schedule),
+        )
+        .route("/api/v1/hosts", get(crate::v1_assets::list_hosts))
+        .route("/api/v1/hosts/unstable", get(crate::v1_assets::unstable_hosts))
+        .route("/api/v1/hosts/{id}", get(crate::v1_assets::get_host).patch(crate::v1_assets::update_host))
+        .route("/api/v1/hosts/{id}/overrides/{field}", delete(crate::v1_assets::revert_host))
+        .route("/api/v1/hosts/{id}/history", get(crate::v1_assets::host_history))
+        .route("/api/v1/hosts/{id}/recheck", post(crate::v1_assets::recheck_host))
+        .route("/api/v1/services", get(crate::v1_assets::list_services))
+        .route("/api/v1/services/{id}", get(crate::v1_assets::get_service).patch(crate::v1_assets::update_service))
+        .route("/api/v1/services/{id}/cookies/{name}/reveal", post(crate::v1_assets::reveal_cookie))
+        .route("/api/v1/service-groups", get(crate::v1_assets::service_groups))
+        .route("/api/v1/diffs", get(crate::v1_assets::diffs))
+        .route("/api/v1/signatures", get(crate::signatures::list).post(crate::signatures::create))
+        .route("/api/v1/signatures/test", post(crate::signatures::test))
+        .route("/api/v1/signatures/export", get(crate::signatures::export))
+        .route("/api/v1/signatures/import", post(crate::signatures::import))
+        .route(
+            "/api/v1/signatures/{id}",
+            get(crate::signatures::get).patch(crate::signatures::update).delete(crate::signatures::remove),
+        )
 }
 
 pub(crate) type ApiError = (StatusCode, Json<Value>);

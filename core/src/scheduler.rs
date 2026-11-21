@@ -88,7 +88,11 @@ async fn claim(state: &AppState, limit: i64) -> sqlx::Result<Vec<Uuid>> {
                                        AND r.status IN ('queued', 'running', 'paused'))
                      ORDER BY s.next_run_at LIMIT $1 FOR UPDATE SKIP LOCKED
                  ), bumped AS (
-                     UPDATE scans s SET next_run_at = CASE WHEN s.repeat_every_minutes IS NULL THEN NULL
+                     UPDATE scans s SET next_run_at = CASE
+                         -- Schedules: the next opening of their clock window (F-20).
+                         WHEN s.is_schedule AND s.window_start IS NOT NULL
+                             THEN asi_next_window_open(s.window_start, s.timezone, s.schedule_days, now() + interval '1 minute')
+                         WHEN s.repeat_every_minutes IS NULL THEN NULL
                          ELSE now() + make_interval(mins => s.repeat_every_minutes) END
                      FROM due WHERE s.id = due.id RETURNING s.id
                  )

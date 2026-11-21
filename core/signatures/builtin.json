@@ -1,0 +1,214 @@
+[
+  {
+    "name": "phpMyAdmin",
+    "description": "Panel phpMyAdmin — zarządzanie bazą MySQL/MariaDB dostępne z sieci.",
+    "category": "admin_panel", "technology": "phpMyAdmin", "score_weight": 25, "tags": ["database", "admin"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "title", "op": "regex", "value": "^phpMyAdmin" },
+      { "type": "cookie", "name": "phpMyAdmin", "op": "exists" },
+      { "type": "cookie", "name": "pma_lang", "op": "exists" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Grafana",
+    "description": "Panel Grafana (dashboardy, źródła danych).",
+    "category": "admin_panel", "technology": "Grafana", "score_weight": 15, "tags": ["monitoring"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "cookie", "name": "grafana_session", "op": "exists" },
+      { "type": "title", "op": "regex", "value": "^Grafana$" },
+      { "type": "version", "op": "regex", "value": "^Grafana", "extract": "Grafana[: /v]*([0-9][0-9.]*)" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Kibana",
+    "description": "Interfejs Kibana (Elastic Stack).",
+    "category": "admin_panel", "technology": "Kibana", "score_weight": 15, "tags": ["monitoring", "elastic"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "header", "name": "kbn-name", "op": "exists" },
+      { "type": "header", "name": "kbn-version", "op": "exists" },
+      { "type": "title", "op": "regex", "value": "^(Elastic|Kibana)$" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Jenkins",
+    "description": "Serwer CI Jenkins — dostęp do zadań i poświadczeń budowania.",
+    "category": "admin_panel", "technology": "Jenkins", "score_weight": 25, "tags": ["devops", "ci"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "header", "name": "X-Jenkins", "op": "exists" },
+      { "type": "header", "name": "X-Hudson", "op": "exists" },
+      { "type": "title", "op": "regex", "value": "\\[Jenkins\\]$|^Sign in \\[Jenkins\\]" }
+    ] }, "version": 1
+  },
+  {
+    "name": "GitLab",
+    "description": "Instancja GitLab.",
+    "category": "admin_panel", "technology": "GitLab", "score_weight": 15, "tags": ["devops", "git"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "cookie", "name": "_gitlab_session", "op": "exists" },
+      { "type": "header", "name": "X-Gitlab-Meta", "op": "exists" },
+      { "type": "title", "op": "regex", "value": "· GitLab$|^Sign in · GitLab" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Portainer",
+    "description": "Panel Portainer — zarządzanie kontenerami Docker.",
+    "category": "admin_panel", "technology": "Portainer", "score_weight": 30, "tags": ["devops", "docker"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "title", "op": "regex", "value": "^Portainer$" },
+      { "type": "header", "name": "X-Portainer", "op": "exists" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Webmin",
+    "description": "Panel administracji serwerem Webmin.",
+    "category": "admin_panel", "technology": "Webmin", "score_weight": 30, "tags": ["admin"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "header", "name": "Server", "op": "regex", "value": "^MiniServ" },
+      { "type": "title", "op": "regex", "value": "Login to Webmin" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Tomcat Manager",
+    "description": "Aplikacja Tomcat Manager (wdrażanie aplikacji WAR) wymagająca uwierzytelnienia Basic.",
+    "category": "admin_panel", "technology": "Apache Tomcat", "score_weight": 30, "tags": ["java", "admin"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "header", "name": "WWW-Authenticate", "op": "contains", "value": "Tomcat Manager Application" },
+      { "type": "title", "op": "contains", "value": "/manager" }
+    ] }, "version": 1
+  },
+  {
+    "name": "cPanel / WHM",
+    "description": "Panel hostingowy cPanel lub WHM.",
+    "category": "admin_panel", "technology": "cPanel", "score_weight": 20, "tags": ["hosting", "admin"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "cookie", "name": "cprelogin", "op": "exists" },
+      { "type": "cookie", "name": "whostmgrrelogin", "op": "exists" },
+      { "type": "header", "name": "Server", "op": "regex", "value": "^cpsrvd" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Plesk",
+    "description": "Panel hostingowy Plesk.",
+    "category": "admin_panel", "technology": "Plesk", "score_weight": 20, "tags": ["hosting", "admin"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "header", "name": "X-Powered-By", "op": "contains", "value": "PleskLin" },
+      { "type": "cookie", "name": "PLESKSESSID", "op": "exists" },
+      { "type": "title", "op": "regex", "value": "^Plesk( Obsidian)?" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Apache Tomcat",
+    "description": "Serwer aplikacji Apache Tomcat (domyślna strona lub nagłówek Coyote).",
+    "category": "technology", "technology": "Apache Tomcat", "score_weight": 5, "tags": ["java", "app_server"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "title", "op": "regex", "value": "^Apache Tomcat", "extract": "Apache Tomcat/?\\s*([0-9][0-9.]*)" },
+      { "type": "header", "name": "Server", "op": "contains", "value": "Apache-Coyote" },
+      { "type": "version", "op": "regex", "value": "Tomcat", "extract": "Tomcat[ /:v]*([0-9][0-9.]*)" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Microsoft IIS",
+    "description": "Serwer WWW Microsoft IIS.",
+    "category": "technology", "technology": "Microsoft IIS", "score_weight": 3, "tags": ["web_server", "windows"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "header", "name": "Server", "op": "regex", "value": "^Microsoft-IIS", "extract": "Microsoft-IIS/([0-9.]+)" }
+    ] }, "version": 1
+  },
+  {
+    "name": "JBoss / WildFly",
+    "description": "Serwer aplikacji JBoss EAP lub WildFly.",
+    "category": "technology", "technology": "WildFly", "score_weight": 8, "tags": ["java", "app_server"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "header", "name": "X-Powered-By", "op": "regex", "value": "JBoss|Undertow" },
+      { "type": "header", "name": "Server", "op": "regex", "value": "^(WildFly|JBoss)" },
+      { "type": "title", "op": "regex", "value": "^Welcome to (WildFly|JBoss)" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Oracle WebLogic",
+    "description": "Serwer aplikacji Oracle WebLogic.",
+    "category": "technology", "technology": "Oracle WebLogic", "score_weight": 10, "tags": ["java", "app_server"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "title", "op": "contains", "value": "WebLogic Server" },
+      { "type": "cookie", "name": "ADMINCONSOLESESSION", "op": "exists" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Hikvision (kamera IP)",
+    "description": "Interfejs WWW rejestratora lub kamery Hikvision.",
+    "category": "iot", "technology": "Hikvision", "score_weight": 25, "tags": ["camera", "iot"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "header", "name": "Server", "op": "regex", "value": "^(App-webs|DNVRS-Webs|Hikvision-Webs)" },
+      { "type": "title", "op": "regex", "value": "^(Hikvision|HIKVISION)" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Dahua (kamera IP)",
+    "description": "Interfejs WWW urządzenia Dahua.",
+    "category": "iot", "technology": "Dahua", "score_weight": 25, "tags": ["camera", "iot"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "title", "op": "regex", "value": "^WEB SERVICE$" },
+      { "type": "cookie", "name": "DhWebClientSessionID", "op": "exists" }
+    ] }, "version": 1
+  },
+  {
+    "name": "MikroTik RouterOS",
+    "description": "Panel WebFig routera MikroTik.",
+    "category": "iot", "technology": "MikroTik RouterOS", "score_weight": 25, "tags": ["network", "router"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "title", "op": "regex", "value": "^RouterOS router configuration page" },
+      { "type": "title", "op": "regex", "value": "^mikrotik routeros", "extract": "RouterOS v?([0-9.]+)" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Drukarka HP (Embedded Web Server)",
+    "description": "Wbudowany serwer WWW drukarki HP.",
+    "category": "iot", "technology": "HP Embedded Web Server", "score_weight": 15, "tags": ["printer", "iot"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "header", "name": "Server", "op": "regex", "value": "^(HP HTTP Server|HP-ChaiSOE|Virata-EmWeb)" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Ubiquiti UniFi",
+    "description": "Kontroler lub urządzenie Ubiquiti UniFi.",
+    "category": "iot", "technology": "Ubiquiti UniFi", "score_weight": 15, "tags": ["network", "wifi"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "title", "op": "regex", "value": "^UniFi Network" },
+      { "type": "cookie", "name": "unifises", "op": "exists" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Interfejs BMC (iDRAC / iLO)",
+    "description": "Zdalne zarządzanie serwerem: Dell iDRAC lub HPE iLO.",
+    "category": "admin_panel", "technology": "BMC", "score_weight": 35, "tags": ["bmc", "hardware"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "title", "op": "regex", "value": "^(iDRAC|Integrated Dell Remote Access Controller|iLO [0-9])" },
+      { "type": "header", "name": "Server", "op": "regex", "value": "^(Mbedthis-Appweb|HPE-iLO-Server|HP-iLO-Server)" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Środowisko testowe w tytule",
+    "description": "Tytuł strony wskazuje na środowisko testowe/deweloperskie (staging, test, dev, uat).",
+    "category": "staging", "technology": null, "score_weight": 10, "tags": ["staging"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "title", "op": "regex", "value": "\\b(staging|stage|test|testing|dev|development|uat|preprod|pre-prod)\\b" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Ujawniona wersja PHP",
+    "description": "Nagłówek X-Powered-By podaje wersję PHP — ułatwia dobór podatności.",
+    "category": "header", "technology": "PHP", "score_weight": 5, "tags": ["disclosure"],
+    "match": { "operator": "and", "conditions": [
+      { "type": "header", "name": "X-Powered-By", "op": "regex", "value": "PHP/[0-9]", "extract": "PHP/([0-9][0-9.]*)" }
+    ] }, "version": 1
+  },
+  {
+    "name": "Listing katalogu",
+    "description": "Serwer pokazuje listę plików katalogu (Index of /).",
+    "category": "exposure", "technology": null, "score_weight": 15, "tags": ["disclosure"],
+    "match": { "operator": "or", "conditions": [
+      { "type": "title", "op": "regex", "value": "^Index of /" },
+      { "type": "title", "op": "regex", "value": "^Directory listing for /" }
+    ] }, "version": 1
+  }
+]
