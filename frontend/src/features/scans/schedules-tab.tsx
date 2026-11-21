@@ -1,19 +1,19 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, Pencil, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { EmptyState, ErrorState, Guard, SearchInput } from "@/components/data/bits";
 import { Button } from "@/components/ui/button";
-import { Checkbox, Field, Input, Segmented, Switch } from "@/components/ui/form-controls";
+import { Checkbox, Field, Input, Segmented, Switch, SwitchRow } from "@/components/ui/form-controls";
 import { Skeleton } from "@/components/ui/misc";
 import { ConfirmDialog, Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/overlays";
 import { SimpleSelect } from "@/components/ui/select";
 import { ApiError, errorMessage } from "@/lib/api/client";
 import { api } from "@/lib/api/endpoints";
 import type { Schedule, ScheduleInput } from "@/lib/api/types";
-import { fmtNumber, fmtSmart } from "@/lib/format";
+import { countLabel, fmtSmart } from "@/lib/format";
 import { WEEKDAYS, WEEKDAYS_LONG } from "@/lib/labels";
 import { isWithinWindow, nextScheduleRun } from "@/lib/schedule";
 import { useCan } from "@/lib/session";
@@ -116,12 +116,9 @@ function ScheduleForm({ schedule, onClose }: { schedule: Schedule | null; onClos
         <Field label="Nazwa" htmlFor="sch-name">
           <Input id="sch-name" disabled={!editable} value={name} onChange={(e) => setName(e.target.value)} placeholder="np. Nocny przegląd laboratoriów" />
         </Field>
-        <label className="flex items-center justify-between gap-3 rounded-lg border border-line p-3">
-          <span className="text-sm font-semibold">Harmonogram aktywny</span>
-          <Switch checked={enabled} disabled={!editable} onCheckedChange={setEnabled} />
-        </label>
+        <SwitchRow label="Harmonogram aktywny" checked={enabled} disabled={!editable} onCheckedChange={setEnabled} />
 
-        <Field label={`Cele (${targetIds.size}, ${fmtNumber(addresses)} adresów)`}>
+        <Field label={`Cele (${targetIds.size}, ${countLabel(addresses, ["adres", "adresy", "adresów"])})`}>
           <div className="grid gap-2 rounded-lg border border-line p-2">
             <SearchInput value={filter} onChange={setFilter} placeholder="Filtruj cele…" />
             <ul className="scroll-quiet max-h-48 overflow-y-auto">
@@ -180,7 +177,7 @@ function ScheduleForm({ schedule, onClose }: { schedule: Schedule | null; onClos
           />
         </Field>
         {frequency === "cron" ? (
-          <Field label="Wyrażenie cron" htmlFor="sch-cron" hint="Pola: minuta, godzina, dzień miesiąca, miesiąc, dzień tygodnia. Np. „0 10,13,15 * * 1-5” — o 10, 13 i 15 w dni robocze.">
+          <Field label="Wyrażenie cron" htmlFor="sch-cron" hint="Pola: minuta, godzina, dzień miesiąca, miesiąc, dzień tygodnia. Przykład „0 10,13,15 * * 1-5”: o 10, 13 i 15 w dni robocze.">
             <Input id="sch-cron" className="mono" disabled={!editable} value={cron} onChange={(e) => setCron(e.target.value)} />
           </Field>
         ) : (
@@ -210,15 +207,12 @@ function ScheduleForm({ schedule, onClose }: { schedule: Schedule | null; onClos
         )}
         {nextRun ? (
           <div className="grid gap-1 rounded-lg bg-surface-2 px-3 py-2.5 text-sm text-ink-2" aria-live="polite">
-            <p className="flex items-center gap-2">
-              <CalendarClock className="size-4 shrink-0 text-link" aria-hidden />
-              <span>
-                {enabled ? "Najbliższe uruchomienie: " : "Po włączeniu najbliższe uruchomienie: "}
-                <span className="font-semibold text-ink">{fmtSmart(nextRun.toISOString())}</span>
-              </span>
+            <p>
+              {enabled ? "Najbliższe uruchomienie: " : "Po włączeniu najbliższe uruchomienie: "}
+              <span className="font-semibold text-ink">{fmtSmart(nextRun.toISOString())}</span>
             </p>
             {outsideWindow ? (
-              <p className="pl-6">
+              <p>
                 Ten termin wypada poza oknem {start}–{end}, więc skan rozpocznie się dopiero po otwarciu okna.
               </p>
             ) : null}
@@ -294,8 +288,7 @@ export function SchedulesTab() {
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   return (
     <div className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-2xl text-sm text-ink-2">Harmonogramy uruchamiają skanowania cyklicznie w określonych oknach czasowych, np. nocą, aby ograniczyć wpływ na użytkowników sieci.</p>
+      <div className="flex justify-end">
         <Guard permission="schedules:create">
           <Button variant="primary" onClick={() => setEditing({ schedule: null })}>
             <Plus /> Nowy harmonogram
@@ -304,11 +297,25 @@ export function SchedulesTab() {
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
         {(q.data ?? []).map((s) => (
-          <article key={s.id} className={cn("grid content-start gap-4 rounded-xl border border-line bg-surface p-5", !s.enabled && "opacity-70")}>
+          <article key={s.id} className="grid content-start gap-4 rounded-xl border border-line bg-surface p-5">
             <div className="flex items-start justify-between gap-3">
               <div className="grid gap-1">
-                <h3 className="font-bold">{s.name}</h3>
-                <p className="text-sm text-ink-2">Profil: {profiles.data?.find((p) => p.id === s.profile_id)?.name ?? "—"}</p>
+                <h3 className="font-semibold">{s.name}</h3>
+                {/* The window is the schedule's main fact: right under the name, no box, no icon. */}
+                <p className="flex flex-wrap items-baseline gap-x-2">
+                  <span className={cn("tabular text-lg font-semibold", !s.enabled && "text-ink-2")}>
+                    {s.window.start}–{s.window.end}
+                  </span>
+                  <span className="text-sm text-ink-2">
+                    {s.frequency === "cron" ? (
+                      <>
+                        cron <span className="mono">{s.cron}</span>
+                      </>
+                    ) : (
+                      describe(s)
+                    )}
+                  </span>
+                </p>
               </div>
               <Switch
                 aria-label={`Włącz harmonogram ${s.name}`}
@@ -325,35 +332,32 @@ export function SchedulesTab() {
                 }}
               />
             </div>
-            <div className="flex items-center gap-3 rounded-lg bg-surface-2 p-3">
-              <CalendarClock className="size-5 text-link" aria-hidden />
-              <div className="grid">
-                <span className="tabular text-lg font-extrabold">
-                  {s.window.start}–{s.window.end}
-                </span>
-                <span className="text-xs text-ink-2">{describe(s)}</span>
-              </div>
-            </div>
             <dl className="grid gap-1.5 text-sm">
               <div className="flex justify-between gap-3">
+                <dt className="text-ink-2">Profil</dt>
+                <dd className="text-right">{profiles.data?.find((p) => p.id === s.profile_id)?.name ?? "—"}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
                 <dt className="text-ink-2">Następne uruchomienie</dt>
-                <dd className="font-semibold">{s.enabled ? fmtSmart(s.next_run_at) : "wyłączony"}</dd>
+                <dd className="text-right">{s.enabled ? fmtSmart(s.next_run_at) : "wyłączony"}</dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-ink-2">Po przekroczeniu okna</dt>
-                <dd className="font-semibold">{s.on_window_exceeded === "pause_resume" ? "wstrzymaj i wznów" : "zatrzymaj"}</dd>
+                <dd className="text-right">{s.on_window_exceeded === "pause_resume" ? "wstrzymaj i wznów" : "zatrzymaj"}</dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-ink-2">Cele</dt>
-                <dd className="font-semibold">{s.target_ids.length}</dd>
+                <dd className="tabular text-right">{s.target_ids.length}</dd>
               </div>
             </dl>
             <Button
               size="sm"
+              variant="ghost"
+              className="-ml-3 justify-self-start"
               onClick={() => setEditing({ schedule: s })}
               aria-label={can("schedules:update") ? `Edytuj harmonogram ${s.name}` : `Szczegóły harmonogramu ${s.name}`}
             >
-              <Pencil /> {can("schedules:update") ? "Edytuj" : "Szczegóły"}
+              {can("schedules:update") ? "Edytuj" : "Szczegóły"}
             </Button>
           </article>
         ))}

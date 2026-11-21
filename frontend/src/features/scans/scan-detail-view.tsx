@@ -10,15 +10,15 @@ import { ScanStatusChip } from "@/components/data/status";
 import { Container, PageHeader } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/form-controls";
-import { Chip, Panel, Progress, Skeleton } from "@/components/ui/misc";
+import { Panel, Progress, Skeleton } from "@/components/ui/misc";
 import { ConfirmDialog, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/overlays";
 import { BatchGrid } from "@/components/viz/bits";
 import { errorMessage } from "@/lib/api/client";
 import { api } from "@/lib/api/endpoints";
 import type { ScanBatch, ScanEvent, ScanLogLine, ScanRun } from "@/lib/api/types";
-import { fmtDateTime, fmtDuration, fmtNumber, fmtPercent, fmtRelative, fmtSmart, fmtTime } from "@/lib/format";
+import { countLabel, fmtDuration, fmtNumber, fmtPercent, fmtRelative, fmtSmart, fmtTime } from "@/lib/format";
 import { useApiMutation, useDownload } from "@/lib/hooks";
-import { SCAN_PHASES } from "@/lib/labels";
+import { CHANGE_COUNT_FORMS, SCAN_PHASES } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 
 const LIVE = ["running", "paused", "paused_window", "queued"];
@@ -48,8 +48,8 @@ function useScanStream(id: string, enabled: boolean) {
     es.addEventListener("window", (e) => {
       const ev = parse(e as MessageEvent);
       if (ev.type !== "window") return;
-      if (ev.state === "paused") toast.warning("Koniec okna czasowego — skan wstrzymany", { description: `Punkt kontrolny zapisany. Wznowienie ${fmtSmart(ev.resume_at)}.` });
-      else toast.success("Nowe okno — skan wznowiony od punktu kontrolnego");
+      if (ev.state === "paused") toast.warning("Koniec okna czasowego, skan wstrzymany", { description: `Punkt kontrolny zapisany. Wznowienie ${fmtSmart(ev.resume_at)}.` });
+      else toast.success("Nowe okno: skan wznowiony od punktu kontrolnego");
     });
     es.addEventListener("done", (e) => {
       const ev = parse(e as MessageEvent);
@@ -57,7 +57,7 @@ function useScanStream(id: string, enabled: boolean) {
         setScan(ev.scan);
         if (ev.scan.status === "completed")
           toast.success(`Skan #${ev.scan.number} zakończony`, {
-            description: `${ev.scan.stats.new} nowe, ${ev.scan.stats.changed} zmienione, ${ev.scan.stats.gone} zniknęło, ${ev.scan.stats.unstable} niestabilne.`,
+            description: `${(["new", "changed", "gone", "unstable"] as const).map((k) => countLabel(ev.scan.stats[k], CHANGE_COUNT_FORMS[k])).join(", ")}.`,
             // eslint-disable-next-line @next/next/no-location-assign-relative-destination
             action: { label: "Zobacz zmiany", onClick: () => (window.location.href = `/changes?head=${ev.scan.id}`) },
           });
@@ -71,26 +71,41 @@ function useScanStream(id: string, enabled: boolean) {
   return { scan, logs, batches };
 }
 
+/**
+ * Scan phases. A finished scan gets one quiet line of ticks; during a live scan only the current
+ * phase is framed and accented. Tools are mono only when they are real command lines.
+ */
 function PhaseStepper({ phase, done }: { phase: ScanRun["phase"]; done: boolean }) {
-  const idx = done ? SCAN_PHASES.length : SCAN_PHASES.findIndex((p) => p.key === phase);
+  if (done) {
+    return (
+      <ol className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm text-ink-2" aria-label="Fazy skanu">
+        {SCAN_PHASES.map((p) => (
+          <li key={p.key} className="inline-flex items-center gap-1.5" title={p.tool}>
+            <Check className="size-3.5" strokeWidth={3} aria-hidden />
+            {p.label}
+            <span className="sr-only">(ukończona)</span>
+          </li>
+        ))}
+      </ol>
+    );
+  }
+  const idx = SCAN_PHASES.findIndex((p) => p.key === phase);
   return (
-    <ol className="grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
+    <ol className="grid gap-2 sm:grid-cols-3 xl:grid-cols-6" aria-label="Fazy skanu">
       {SCAN_PHASES.map((p, i) => {
         const state = i < idx ? "done" : i === idx ? "current" : "todo";
         return (
           <li
             key={p.key}
             aria-current={state === "current" ? "step" : undefined}
-            className={cn(
-              "grid gap-0.5 rounded-lg border px-3 py-2",
-              state === "current" ? "border-accent bg-accent/[0.07]" : state === "done" ? "border-line bg-surface-2" : "border-dashed border-line-strong",
-            )}
+            className={cn("grid content-start gap-0.5 rounded-lg border px-3 py-2", state === "current" ? "border-accent bg-accent/[0.07]" : "border-transparent")}
           >
-            <span className="flex items-center gap-1.5 text-sm font-bold">
-              {state === "done" ? <Check className="size-3.5 text-success" strokeWidth={3} aria-hidden /> : state === "current" ? <span className="size-2 animate-pulse-dot rounded-full bg-accent" aria-hidden /> : null}
+            <span className={cn("flex items-center gap-1.5 text-sm", state === "todo" ? "text-ink-2" : "font-semibold")}>
+              {state === "done" ? <Check className="size-3.5 text-ink-2" strokeWidth={3} aria-hidden /> : state === "current" ? <span className="size-2 animate-pulse-dot rounded-full bg-accent" aria-hidden /> : null}
               {p.label}
+              {state === "done" ? <span className="sr-only">(ukończona)</span> : null}
             </span>
-            <span className="mono text-xs text-ink-2">{p.tool}</span>
+            <span className={cn("text-xs text-ink-2", p.command && "mono")}>{p.tool}</span>
           </li>
         );
       })}
@@ -110,7 +125,7 @@ function LogConsole({ logs }: { logs: ScanLogLine[] }) {
         {logs.map((l, i) => (
           <li key={i} className="mono grid grid-cols-[4.5rem_1fr] gap-3 text-sm leading-relaxed">
             <span className="text-chrome-ink-2">{fmtTime(l.at)}</span>
-            <span className={cn(l.level === "warn" && "text-[#f7c35f]", l.level === "error" && "text-[#ff8a8f]")}>{l.message}</span>
+            <span className={cn(l.level === "warn" && "text-log-warn", l.level === "error" && "text-log-error")}>{l.message}</span>
           </li>
         ))}
       </ol>
@@ -141,7 +156,7 @@ function EditScanForm({ scan, onOpenChange }: { scan: ScanRun; onOpenChange: (o:
     <>
         <SheetHeader>
           <SheetTitle>Edytuj skan #{scan.number}</SheetTitle>
-          <SheetDescription>Nazwę, notatki i tagi możesz zmieniać w każdej chwili — także w trakcie skanowania.</SheetDescription>
+          <SheetDescription>Nazwę, notatki i tagi możesz zmieniać w każdej chwili, także w trakcie skanowania.</SheetDescription>
         </SheetHeader>
         <SheetBody className="grid content-start gap-4">
           <Field label="Nazwa" htmlFor="sc-name">
@@ -168,9 +183,9 @@ function EditScanForm({ scan, onOpenChange }: { scan: ScanRun; onOpenChange: (o:
 
 function Stat({ label, value, hint }: { label: string; value: React.ReactNode; hint?: React.ReactNode }) {
   return (
-    <div className="grid gap-0.5">
+    <div className="grid content-start gap-0.5">
       <span className="text-sm text-ink-2">{label}</span>
-      <span className="tabular text-xl font-extrabold">{value}</span>
+      <span className="tabular text-xl font-semibold">{value}</span>
       {hint ? <span className="text-xs text-ink-2">{hint}</span> : null}
     </div>
   );
@@ -219,6 +234,8 @@ export function ScanDetailView({ id }: { id: string }) {
 
   if (base.isError) return <Container className="py-8"><ErrorState error={base.error} onRetry={() => base.refetch()} /></Container>;
   if (!scan) return <Container className="grid gap-4 py-8"><Skeleton className="h-10 w-80" /><Skeleton className="h-64" /></Container>;
+  const completed = scan.status === "completed";
+  const totalChanges = scan.stats.new + scan.stats.changed + scan.stats.gone + scan.stats.unstable;
 
   return (
     <Container className="pb-12">
@@ -229,11 +246,12 @@ export function ScanDetailView({ id }: { id: string }) {
         meta={
           <>
             <ScanStatusChip value={scan.status} />
-            <Chip tone="outline">{scan.targets_label}</Chip>
-            {scan.profile_name ? <Chip tone="outline">Profil: {scan.profile_name}</Chip> : null}
-            {scan.tags.map((t) => (
-              <Chip key={t} tone="outline">#{t}</Chip>
-            ))}
+            <span aria-hidden className="text-ink-3">
+              ·
+            </span>
+            <span>{scan.targets_label}</span>
+            {scan.profile_name ? <span>Profil: {scan.profile_name}</span> : null}
+            {scan.tags.length ? <span>Tagi: {scan.tags.join(", ")}</span> : null}
           </>
         }
         actions={
@@ -298,43 +316,58 @@ export function ScanDetailView({ id }: { id: string }) {
           description={
             isLive
               ? scan.status === "paused_window"
-                ? `Okno czasowe zamknięte — skan wznowi się ${fmtSmart(scan.resume_at)} od ostatniej ukończonej podgrupy.`
+                ? `Okno zamknięte; skan wznowi się ${fmtSmart(scan.resume_at)} od ostatniej podgrupy.`
                 : scan.window_ends_at
-                  ? `Okno zamyka się ${fmtRelative(scan.window_ends_at)}; po jego końcu skan zapisze punkt kontrolny.`
-                  : "Aktualizacje przez Server-Sent Events, co sekundę."
-              : `Start ${fmtDateTime(scan.started_at)}, koniec ${fmtDateTime(scan.finished_at)}.`
+                  ? `Okno zamyka się ${fmtRelative(scan.window_ends_at)}, potem skan zapisze punkt kontrolny.`
+                  : "Aktualizacje co sekundę."
+              : undefined
           }
         >
           <div className="grid gap-6">
-            <div className="grid gap-2">
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="tabular text-4xl font-extrabold tracking-tight">{fmtPercent(scan.progress)}</span>
-                <span className="text-sm text-ink-2">
-                  podgrupa {fmtNumber(scan.batches_done)} z {fmtNumber(scan.batches_total)}
-                </span>
+            {completed ? (
+              // A finished scan does not need a full 100% bar: one sentence says when it ended and what it found.
+              <p className="text-base text-pretty">
+                Zakończony <span className="font-semibold">{fmtSmart(scan.finished_at)}</span>, start {fmtSmart(scan.started_at)}.{" "}
+                <span className="font-semibold">{countLabel(totalChanges, ["zmiana", "zmiany", "zmian"])}</span> względem poprzedniego skanu.
+              </p>
+            ) : (
+              <div className="grid gap-2">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className={cn("tabular font-semibold tracking-tight", isLive ? "text-4xl" : "text-2xl")}>{fmtPercent(scan.progress)}</span>
+                  <span className="text-sm text-ink-2">
+                    podgrupa {fmtNumber(scan.batches_done)} z {fmtNumber(scan.batches_total)}
+                  </span>
+                </div>
+                <Progress
+                  value={scan.progress}
+                  className={isLive ? "h-3" : "h-2"}
+                  barClassName={scan.status === "paused_window" || scan.status === "paused" ? "bg-unstable" : !isLive ? "bg-ink-2" : undefined}
+                  label="Postęp skanowania"
+                />
               </div>
-              <Progress value={scan.progress} className="h-3" barClassName={scan.status === "paused_window" || scan.status === "paused" ? "bg-unstable" : undefined} label="Postęp skanowania" />
-            </div>
+            )}
             <div className="grid grid-cols-2 gap-5 md:grid-cols-5">
               <Stat label="Tempo" value={`${fmtNumber(scan.rate_rps)}/s`} hint={`limit ${fmtNumber(scan.rate_limit_rps)} zapytań/s`} />
-              <Stat label="Czas trwania" value={fmtDuration(scan.duration_s)} hint={scan.windows_used > 1 ? `${scan.windows_used} okna czasowe` : scan.window ? `okno ${scan.window.start}–${scan.window.end}` : undefined} />
+              <Stat
+                label="Czas trwania"
+                value={fmtDuration(scan.duration_s)}
+                hint={scan.windows_used > 1 ? countLabel(scan.windows_used, ["okno czasowe", "okna czasowe", "okien czasowych"]) : scan.window ? `okno ${scan.window.start}–${scan.window.end}` : undefined}
+              />
               <Stat label={isLive ? "Pozostało" : "Adresy"} value={isLive ? (scan.eta_s !== null ? fmtDuration(scan.eta_s) : "—") : fmtNumber(scan.address_count)} />
-              <Stat label="Aktywne hosty" value={fmtNumber(scan.stats.hosts_alive)} hint={!isLive ? `${fmtNumber(scan.stats.services)} usług` : "dotychczas"} />
+              <Stat label="Aktywne hosty" value={fmtNumber(scan.stats.hosts_alive)} hint={!isLive ? countLabel(scan.stats.services, ["usługa", "usługi", "usług"]) : "dotychczas"} />
               <Stat
                 label="Zmiany"
-                value={scan.status === "completed" ? fmtNumber(scan.stats.new + scan.stats.changed + scan.stats.gone + scan.stats.unstable) : "—"}
-                hint={scan.status === "completed" ? `${scan.stats.new} nowe, ${scan.stats.changed} zmienione, ${scan.stats.gone} zniknęło` : "po zakończeniu"}
+                value={completed ? fmtNumber(totalChanges) : "—"}
+                hint={completed ? (["new", "changed", "gone"] as const).map((k) => countLabel(scan.stats[k], CHANGE_COUNT_FORMS[k])).join(", ") : "po zakończeniu"}
               />
             </div>
-            {scan.source === "scanner" ? <PhaseStepper phase={scan.phase} done={scan.status === "completed"} /> : null}
+            {scan.source === "scanner" ? <PhaseStepper phase={scan.phase} done={completed} /> : null}
           </div>
         </Panel>
 
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <Panel title="Podgrupy adresów" description="Adresy podzielone na podgrupy według przepustowości. Po przekroczeniu okna skan wraca do pierwszej nieukończonej podgrupy.">
-            {batches.length ? <BatchGrid batches={batches} /> : <Skeleton className="h-40" />}
-          </Panel>
-          <Panel title="Dziennik skanowania" description="Fazy, podgrupy, okna czasowe i decyzje silnika.">
+        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <Panel title="Podgrupy adresów">{batches.length ? <BatchGrid batches={batches} /> : <Skeleton className="h-40" />}</Panel>
+          <Panel title="Dziennik skanowania">
             <LogConsole logs={logs} />
           </Panel>
         </div>

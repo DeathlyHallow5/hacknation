@@ -6,7 +6,8 @@ import * as React from "react";
 import { cssVar, LegendItem, useThemeVersion } from "@/components/viz/core";
 import { api } from "@/lib/api/endpoints";
 import { AddressStatus } from "@/lib/api/types";
-import { fmtNumber } from "@/lib/format";
+import { countLabel, fmtNumber } from "@/lib/format";
+import { CHANGE_COUNT_FORMS } from "@/lib/labels";
 import { hilbertD2XY, hilbertXY2D, intToIp, parseCidr } from "@/lib/net";
 import { usePrefersReducedMotion } from "@/lib/prefs";
 import { cn } from "@/lib/utils";
@@ -119,7 +120,7 @@ export function HilbertMap({ cidr, size = 360, className }: { cidr: string; size
       ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
       // /24 grid for orientation
       const step = (canvas.width / n) * blockSide;
-      ctx.strokeStyle = "rgba(11,24,48,0.55)";
+      ctx.strokeStyle = cssVar("--map-grid", "rgba(11,24,48,0.55)");
       ctx.lineWidth = Math.max(1, dpr * 0.75);
       if (n >= 64) {
         ctx.beginPath();
@@ -252,49 +253,56 @@ export function HilbertMap({ cidr, size = 360, className }: { cidr: string; size
           role="img"
           aria-label={
             c
-              ? `Mapa ${data?.cidr}: ${fmtNumber(c.active + c.new + c.changed)} aktywnych, ${c.unstable} niestabilnych, ${c.new} nowych, ${c.changed} zmienionych, ${c.gone} zniknęło, ${fmtNumber(c.excluded)} wykluczonych.`
-              : "Mapa przestrzeni adresowej — wczytywanie"
+              ? `Mapa ${data?.cidr}: ${[
+                  countLabel(c.active + c.new + c.changed, ["aktywny", "aktywne", "aktywnych"]),
+                  countLabel(c.unstable, CHANGE_COUNT_FORMS.unstable),
+                  countLabel(c.new, CHANGE_COUNT_FORMS.new),
+                  countLabel(c.changed, CHANGE_COUNT_FORMS.changed),
+                  countLabel(c.gone, CHANGE_COUNT_FORMS.gone),
+                  countLabel(c.excluded, ["wykluczony", "wykluczone", "wykluczonych"]),
+                ].join(", ")}.`
+              : "Mapa przestrzeni adresowej: wczytywanie"
           }
           onPointerMove={onMove}
           onPointerLeave={() => setHover(null)}
           onClick={() => hoverInfo && router.push(`/assets?cidr=${encodeURIComponent(hoverInfo.subnet)}`)}
         />
+        {/* Scan position: a plain 2px ring, no glow, no ping (the sweep is the one animated moment). */}
         {head ? (
           <span
-            className="pointer-events-none absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-accent shadow-[0_0_0_4px_rgba(30,178,234,0.25)]"
+            className="pointer-events-none absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-accent"
             style={{ left: `${((head[0] + 0.5) / n) * 100}%`, top: `${((head[1] + 0.5) / n) * 100}%` }}
             aria-hidden
-          >
-            <span className="absolute inset-0 animate-ping rounded-full bg-accent/40" />
-          </span>
+          />
         ) : null}
         {hover && hoverInfo ? (
           <div
             className="pointer-events-none absolute z-20 min-w-44 rounded-lg border border-chrome-line bg-chrome px-3 py-2 text-xs text-chrome-ink shadow-pop"
             style={{ left: hover.x, top: hover.y, transform: `translate(${hover.x > hover.w - 200 ? "calc(-100% - 14px)" : "14px"}, -50%)` }}
           >
-            <div className="mono text-sm font-bold text-white">{hoverInfo.ip}</div>
+            <div className="mono text-sm font-semibold text-white">{hoverInfo.ip}</div>
             <div className="text-chrome-ink-2">{STATUS_LABEL[hoverInfo.status]}</div>
             <div className="mt-1.5 border-t border-chrome-line pt-1.5 text-chrome-ink-2">
-              <span className="mono text-chrome-ink">{hoverInfo.subnet}</span>: {hoverInfo.active} hostów. Kliknij, aby otworzyć listę.
+              <span className="mono text-chrome-ink">{hoverInfo.subnet}</span>: {countLabel(hoverInfo.active, ["host", "hosty", "hostów"])}. Kliknij, aby otworzyć listę.
             </div>
           </div>
         ) : null}
       </div>
       {c ? (
-        <div className="grid gap-1.5 text-chrome-ink-2 [&_span]:!text-chrome-ink-2 [&_.tabular]:!text-chrome-ink">
-          <div className="flex flex-wrap gap-x-3.5 gap-y-1">
-            <LegendItem color="var(--map-active)" label="Aktywny" value={fmtNumber(c.active)} />
-            <LegendItem color="var(--map-unstable)" label="Niestabilny" value={fmtNumber(c.unstable)} />
-            <LegendItem color="var(--map-inactive)" label="Nieaktywny" value={fmtNumber(c.inactive)} />
-            <LegendItem color="var(--map-excluded)" shape="hatch" label="Wykluczony" value={fmtNumber(c.excluded)} />
-          </div>
-          <div className="flex flex-wrap gap-x-3.5 gap-y-1">
-            <LegendItem color="var(--map-new)" shape="plus" label="Nowy" value={fmtNumber(c.new)} />
-            <LegendItem color="var(--map-changed)" shape="diamond" label="Zmieniony" value={fmtNumber(c.changed)} />
-            <LegendItem color="var(--map-gone)" shape="cross" label="Zniknął" value={fmtNumber(c.gone)} />
-            {head ? <LegendItem color="var(--accent)" shape="ring" label="Pozycja skanu" /> : null}
-          </div>
+        // A two-column ledger: address states on the left, change markers on the right, numbers flush right.
+        <div className="grid grid-cols-2 gap-x-6 text-chrome-ink-2 [&_span]:!text-chrome-ink-2 [&_.tabular]:!text-chrome-ink [&_li>span]:flex [&_li>span]:w-full [&_li>span>.tabular]:ml-auto">
+          <ul className="grid content-start gap-1" aria-label="Stan adresów">
+            <li><LegendItem color="var(--map-active)" label="Aktywny" value={fmtNumber(c.active)} /></li>
+            <li><LegendItem color="var(--map-unstable)" label="Niestabilny" value={fmtNumber(c.unstable)} /></li>
+            <li><LegendItem color="var(--map-inactive)" label="Nieaktywny" value={fmtNumber(c.inactive)} /></li>
+            <li><LegendItem color="var(--map-excluded)" shape="hatch" label="Wykluczony" value={fmtNumber(c.excluded)} /></li>
+          </ul>
+          <ul className="grid content-start gap-1" aria-label="Zmiany od poprzedniego skanu">
+            <li><LegendItem color="var(--map-new)" shape="plus" label="Nowy" value={fmtNumber(c.new)} /></li>
+            <li><LegendItem color="var(--map-changed)" shape="diamond" label="Zmieniony" value={fmtNumber(c.changed)} /></li>
+            <li><LegendItem color="var(--map-gone)" shape="cross" label="Zniknął" value={fmtNumber(c.gone)} /></li>
+            {head ? <li><LegendItem color="var(--accent)" shape="ring" label="Pozycja skanu" /></li> : null}
+          </ul>
         </div>
       ) : null}
     </div>

@@ -216,7 +216,9 @@ export function Segmented<T extends string>({
   "aria-label"?: string;
 }) {
   return (
-    <div role="radiogroup" aria-label={ariaLabel} className={cn("inline-flex rounded-lg border border-line-strong bg-surface-2 p-0.5", className)}>
+    // min-height, not a fixed height: on a narrow screen a long option wraps inside its pill instead of spilling out,
+    // and with very large text (A++ on a phone) whole options move to a second row.
+    <div role="radiogroup" aria-label={ariaLabel} className={cn("inline-flex max-w-full flex-wrap rounded-lg border border-line-strong bg-surface-2 p-0.5", className)}>
       {options.map((o) => (
         <button
           key={o.value}
@@ -225,8 +227,8 @@ export function Segmented<T extends string>({
           aria-checked={value === o.value}
           onClick={() => onChange(o.value)}
           className={cn(
-            "rounded-[4px] font-semibold text-ink-2 transition-colors hover:text-ink aria-checked:bg-surface aria-checked:text-ink aria-checked:shadow-sm aria-checked:ring-1 aria-checked:ring-line-strong contrast:aria-checked:ring-accent",
-            size === "sm" ? "h-7 px-2.5 text-sm" : "h-8 px-3 text-sm",
+            "min-w-0 rounded-[4px] text-center leading-tight font-semibold text-ink-2 transition-colors hover:text-ink aria-checked:bg-surface aria-checked:text-ink aria-checked:shadow-sm aria-checked:ring-1 aria-checked:ring-line-strong contrast:aria-checked:ring-accent",
+            size === "sm" ? "min-h-7 px-2.5 py-1 text-sm" : "min-h-8 px-3 py-1 text-sm",
           )}
         >
           {o.label}

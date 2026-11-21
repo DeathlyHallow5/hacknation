@@ -84,7 +84,8 @@ export function Progress({
 export const Tabs = TabsPrimitive.Root;
 
 export function TabsList({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.List>) {
-  return <TabsPrimitive.List className={cn("relative flex gap-1 overflow-x-auto border-b border-line", className)} {...props} />;
+  // Wraps rather than scrolls: with A++ on a phone a third tab goes to a second row instead of hiding off-screen.
+  return <TabsPrimitive.List className={cn("relative flex flex-wrap gap-1 border-b border-line", className)} {...props} />;
 }
 
 export function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
@@ -152,11 +153,12 @@ export function Panel({
 /** Label/value rows for detail panels and read-only views. */
 export function DefinitionList({ items, className }: { items: { label: React.ReactNode; value: React.ReactNode }[]; className?: string }) {
   return (
-    <dl className={cn("grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-2.5 text-sm", className)}>
+    // minmax(0,1fr) + overflow-wrap:anywhere: long machine values (key ids, URLs) wrap instead of pushing the panel wider.
+    <dl className={cn("grid grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] gap-x-4 gap-y-2.5 text-sm", className)}>
       {items.map((it, i) => (
         <React.Fragment key={i}>
           <dt className="text-ink-2">{it.label}</dt>
-          <dd className="min-w-0 break-words text-ink">{it.value}</dd>
+          <dd className="min-w-0 text-ink [overflow-wrap:anywhere]">{it.value}</dd>
         </React.Fragment>
       ))}
     </dl>

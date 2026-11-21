@@ -1,14 +1,14 @@
 "use client";
 
-import { CircleCheck, CircleX, Copy, FileJson, FileSpreadsheet, FileUp, Upload } from "lucide-react";
+import { CircleCheck, CircleX, FileJson, FileSpreadsheet, FileUp, Upload } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/form-controls";
-import { Chip, Spinner } from "@/components/ui/misc";
+import { Spinner } from "@/components/ui/misc";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/overlays";
 import { errorMessage } from "@/lib/api/client";
 import type { ImportReport } from "@/lib/api/types";
-import { fmtBytes, fmtNumber } from "@/lib/format";
+import { countLabel, fmtBytes, fmtNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export interface ImportWizardProps {
@@ -146,8 +146,8 @@ function ImportBody({ onOpenChange, title, description, samples, formatHint, pre
           <div className="flex flex-wrap items-center gap-2 text-sm text-ink-2">
             Przykładowe pliki:
             {samples.map((s) => (
-              <a key={s.href} href={s.href} download className="inline-flex items-center gap-1 font-semibold text-link hover:underline">
-                <Copy className="size-3.5" aria-hidden /> {s.label}
+              <a key={s.href} href={s.href} download className="mono font-medium text-link hover:underline">
+                {s.label}
               </a>
             ))}
           </div>
@@ -181,17 +181,18 @@ function ImportBody({ onOpenChange, title, description, samples, formatHint, pre
 
         {report ? (
           <div className="grid gap-3">
-            <div className="flex flex-wrap gap-2">
-              <Chip tone="success">{fmtNumber(report.valid)} do zaimportowania</Chip>
-              {report.created ? <Chip tone="accent">{fmtNumber(report.created)} nowych</Chip> : null}
-              {report.updated ? <Chip tone="accent">{fmtNumber(report.updated)} do aktualizacji</Chip> : null}
-              {report.duplicates ? <Chip tone="warning">{fmtNumber(report.duplicates)} duplikatów</Chip> : null}
-              {report.invalid ? <Chip tone="danger">{fmtNumber(report.invalid)} błędnych</Chip> : null}
-              <Chip tone="outline">{report.format.toUpperCase()}, {fmtNumber(report.total_rows)} wierszy</Chip>
-            </div>
+            {/* The validation result as one sentence; only errors get the error colour. */}
+            <p className="text-sm text-pretty text-ink-2">
+              <span className="font-semibold text-ink">Do zaimportowania: {fmtNumber(report.valid)}</span>
+              {report.created ? `, w tym ${countLabel(report.created, ["nowy", "nowe", "nowych"])}` : ""}
+              {report.updated ? `, ${fmtNumber(report.updated)} do aktualizacji` : ""}.
+              {report.duplicates ? ` ${countLabel(report.duplicates, ["duplikat", "duplikaty", "duplikatów"])}.` : ""}
+              {report.invalid ? <span className="font-semibold text-danger"> {countLabel(report.invalid, ["błędny wiersz", "błędne wiersze", "błędnych wierszy"])}.</span> : null}{" "}
+              {report.format.toUpperCase()}, {countLabel(report.total_rows, ["wiersz", "wiersze", "wierszy"])}.
+            </p>
             <div className="scroll-quiet relative max-h-64 overflow-auto rounded-lg border border-line">
               <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-surface-2 text-left text-sm text-ink-2">
+                <thead className="sticky top-0 bg-surface-2 text-left text-xs text-ink-2">
                   <tr>
                     <th className="w-16 px-3 py-2 font-semibold">Wiersz</th>
                     <th className="px-3 py-2 font-semibold">Wartość</th>
@@ -204,9 +205,9 @@ function ImportBody({ onOpenChange, title, description, samples, formatHint, pre
                       <td className="tabular px-3 py-1.5 text-ink-2">{r.row}</td>
                       <td className="mono px-3 py-1.5">{r.value || "—"}</td>
                       <td className="px-3 py-1.5">
-                        <span className={cn("inline-flex items-center gap-1.5 text-sm", r.status === "ok" ? "text-success" : r.status === "duplicate" ? "text-unstable-ink" : "text-danger")}>
-                          {r.status === "ok" ? <CircleCheck className="size-3.5" aria-hidden /> : <CircleX className="size-3.5" aria-hidden />}
-                          {r.status === "ok" ? `OK${r.address_count && r.address_count > 1 ? `, ${fmtNumber(r.address_count)} adresów` : ""}` : r.error}
+                        <span className={cn("inline-flex items-center gap-1.5 text-sm", r.status === "ok" ? "text-ink" : r.status === "duplicate" ? "text-unstable-ink" : "text-danger")}>
+                          {r.status === "ok" ? <CircleCheck className="size-3.5 text-ink-2" aria-hidden /> : <CircleX className="size-3.5" aria-hidden />}
+                          {r.status === "ok" ? `OK${r.address_count && r.address_count > 1 ? `, ${countLabel(r.address_count, ["adres", "adresy", "adresów"])}` : ""}` : r.error}
                         </span>
                       </td>
                     </tr>

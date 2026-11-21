@@ -37,6 +37,19 @@ export function useApiMutation<TVars, TData>(
   });
 }
 
+/** Media query as a value (presentational only: e.g. a shorter chart on phones). Server render assumes `serverValue`. */
+export function useMediaQuery(query: string, serverValue = false) {
+  const subscribe = React.useCallback(
+    (cb: () => void) => {
+      const mq = window.matchMedia(query);
+      mq.addEventListener("change", cb);
+      return () => mq.removeEventListener("change", cb);
+    },
+    [query],
+  );
+  return React.useSyncExternalStore(subscribe, () => window.matchMedia(query).matches, () => serverValue);
+}
+
 /** State persisted in the URL query string (shareable filters). */
 export function useQueryState(key: string, fallback = "") {
   const params = useSearchParams();
