@@ -45,14 +45,27 @@ impl Target {
         }
     }
 
-    /// Lazily expand to scan inputs: IPs for ip/cidr, the name itself for domains.
-    pub fn hosts(&self) -> Box<dyn Iterator<Item = String> + Send + '_> {
+    /// Scan inputs `from..from+n` of this target, computed arithmetically (O(n), not
+    /// O(from)): same order as `IpNet::hosts`, i.e. IPv4 network/broadcast skipped.
+    fn hosts_range(&self, from: u128, n: usize) -> Vec<String> {
         match self.kind {
             TargetKind::Cidr => {
                 let net: IpNet = self.value.parse().expect("canonical CIDR");
-                Box::new(net.hosts().map(|ip| ip.to_string()))
+                let first = match net {
+                    IpNet::V4(v4) if v4.prefix_len() < 31 => u32::from(v4.network()) as u128 + 1,
+                    IpNet::V4(v4) => u32::from(v4.network()) as u128,
+                    IpNet::V6(v6) => u128::from(v6.network()),
+                };
+                let end = (from + n as u128).min(self.host_count());
+                (from..end)
+                    .map(|i| match net {
+                        IpNet::V4(_) => std::net::Ipv4Addr::from((first + i) as u32).to_string(),
+                        IpNet::V6(_) => std::net::Ipv6Addr::from(first + i).to_string(),
+                    })
+                    .collect()
             }
-            _ => Box::new(std::iter::once(self.value.clone())),
+            _ if from == 0 && n > 0 => vec![self.value.clone()],
+            _ => Vec::new(),
         }
     }
 }
@@ -74,7 +87,7 @@ pub fn slice(targets: &[Target], offset: u128, size: usize) -> Vec<String> {
             skip -= count; // jump over whole targets without iterating them
             continue;
         }
-        out.extend(t.hosts().skip(skip as usize).take(size - out.len()));
+        out.extend(t.hosts_range(skip, size - out.len()));
         skip = 0;
         if out.len() == size {
             break;
@@ -111,10 +124,12 @@ pub enum InputError {
     TooBroad(u8, u8),
 }
 
-/// Smallest IPv4 prefix we accept in one entry (/8 = 16.7M addresses). Keeps typos like
-/// `0.0.0.0/0` from turning into an internet-wide scan.
+/// Smallest prefix we accept in one entry (/8 and IPv6 /104 = 16.7M addresses). Keeps typos
+/// like `0.0.0.0/0` from turning into an internet-wide scan.
 const MIN_V4_PREFIX: u8 = 8;
-const MIN_V6_PREFIX: u8 = 64;
+const MIN_V6_PREFIX: u8 = 104;
+/// Upper bound on scan inputs in one scan (sum over its targets).
+pub const MAX_SCAN_HOSTS: u128 = 1 << 24;
 
 pub fn normalize(raw: &str) -> Result<Target, InputError> {
     let s = raw.trim().trim_end_matches('.').to_ascii_lowercase();
@@ -157,14 +172,15 @@ fn is_domain(s: &str) -> bool {
 /// Parse a CSV/plain-text list (one target per line, first column, `#` comments allowed).
 pub fn parse_list(text: &str) -> (Vec<Target>, Vec<(usize, InputError)>) {
     let mut ok = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     let mut errors = Vec::new();
     for (i, line) in text.lines().enumerate() {
-        let first = line.split([',', ';', '\t']).next().unwrap_or("").trim();
+        let first = line.split([',', ';', '\t']).next().unwrap_or("").trim().trim_matches('"').trim();
         if first.is_empty() || first.starts_with('#') {
             continue;
         }
         match normalize(first) {
-            Ok(t) if !ok.contains(&t) => ok.push(t),
+            Ok(t) if seen.insert(t.value.clone()) => ok.push(t),
             Ok(_) => {}
             Err(e) => errors.push((i + 1, e)),
         }
@@ -215,14 +231,34 @@ mod tests {
 
     #[test]
     fn large_range_batch_is_cheap() {
-        // /12 = ~1M hosts: fetching a late batch must not materialize the range.
-        let t = vec![normalize("10.16.0.0/12").unwrap()];
-        assert_eq!(batch(&t, 4000, 256).len(), 256);
+        // /8 = 16.7M hosts: the last batch is computed, not reached by iterating.
+        let t = vec![normalize("10.0.0.0/8").unwrap()];
+        let started = std::time::Instant::now();
+        let last = slice(&t, total_hosts(&t) - 2, 256);
+        assert_eq!(last, ["10.255.255.253", "10.255.255.254"]);
+        assert!(started.elapsed() < std::time::Duration::from_millis(50));
+    }
+
+    #[test]
+    fn arithmetic_slice_matches_ipnet_hosts() {
+        for cidr in ["10.0.0.0/29", "10.0.0.0/31", "192.168.1.0/24", "fd00::/124", "fd00::/127"] {
+            let t = normalize(cidr).unwrap();
+            let net: IpNet = t.value.parse().unwrap();
+            let expected: Vec<String> = net.hosts().map(|ip| ip.to_string()).collect();
+            assert_eq!(expected.len() as u128, t.host_count(), "{cidr}");
+            let got: Vec<String> = (0..expected.len()).step_by(3).flat_map(|i| slice(std::slice::from_ref(&t), i as u128, 3)).collect();
+            assert_eq!(got, expected, "{cidr}");
+        }
+    }
+
+    #[test]
+    fn rejects_huge_ipv6() {
+        assert_eq!(normalize("fd00::/64"), Err(InputError::TooBroad(64, 104)));
     }
 
     #[test]
     fn list_dedups_and_reports_lines() {
-        let (ok, err) = parse_list("# header\n10.0.0.1,web\n10.0.0.1\nfoo..bar\nexample.org");
+        let (ok, err) = parse_list("# header\n10.0.0.1,web\n\"10.0.0.1\"\nfoo..bar\nexample.org");
         assert_eq!(ok.len(), 2);
         assert_eq!(err.len(), 1);
         assert_eq!(err[0].0, 4);

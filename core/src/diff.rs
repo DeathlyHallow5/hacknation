@@ -9,6 +9,8 @@
 //! - confidence = identification confidence × stability, stability = 1 / (1 + flaps).
 //!   For a gone host: misses / threshold.
 //! - interest 1..3 ranks entries for the "most important changes" view.
+//! - Coverage: addresses not comparable between the two runs (target added/removed, batch
+//!   failed) are skipped entirely. What was not measured is not "gone" (F-04, F-05).
 
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -101,12 +103,13 @@ fn round2(x: f32) -> f32 {
     (x.clamp(0.0, 1.0) * 100.0).round() / 100.0
 }
 
-pub fn diff(a: &Snapshot, b: &Snapshot, inactive_after: i32) -> Vec<DiffEntry> {
+/// `skip`: addresses not covered by both runs; nothing is reported about them.
+pub fn diff(a: &Snapshot, b: &Snapshot, inactive_after: i32, skip: &BTreeSet<String>) -> Vec<DiffEntry> {
     let mut out = Vec::new();
     let threshold = inactive_after.max(1) as f32;
 
     // 1) Hosts.
-    let ips: BTreeSet<&String> = a.hosts.keys().chain(b.hosts.keys()).collect();
+    let ips: BTreeSet<&String> = a.hosts.keys().chain(b.hosts.keys()).filter(|ip| !skip.contains(*ip)).collect();
     for ip in ips {
         let (ha, hb) = (a.hosts.get(ip), b.hosts.get(ip));
         let entry = |change, field: Option<&str>, old: Option<&str>, new: Option<&str>, confidence, interest| DiffEntry {
@@ -124,8 +127,9 @@ pub fn diff(a: &Snapshot, b: &Snapshot, inactive_after: i32) -> Vec<DiffEntry> {
                 out.push(entry(Change::New, None, None, None, stability(b, ip), 2))
             }
             (Some(ha), None) if ha.state == "active" => {
-                // Not in B's roster at all (e.g. target removed): plain gone.
-                out.push(entry(Change::Gone, None, None, None, 1.0, 1))
+                // Covered by B but absent from its roster (carry-forward did not run, e.g.
+                // the analysis failed midway): unconfirmed.
+                out.push(entry(Change::Gone, None, None, None, 1.0 / threshold, 1))
             }
             (Some(ha), Some(hb)) if ha.state != hb.state => match hb.state.as_str() {
                 "unstable" => out.push(entry(
@@ -147,7 +151,7 @@ pub fn diff(a: &Snapshot, b: &Snapshot, inactive_after: i32) -> Vec<DiffEntry> {
     // 2) Services and HTTP.
     let not_active_in_b = |ip: &str| b.hosts.get(ip).is_none_or(|h| h.state != "active");
     let index = |s: &Snapshot| -> BTreeMap<(Kind, String), Observation> {
-        s.observations.iter().map(|o| ((o.kind, o.key.clone()), o.clone())).collect()
+        s.observations.iter().filter(|o| !skip.contains(&o.ip)).map(|o| ((o.kind, o.key.clone()), o.clone())).collect()
     };
     let (ia, ib) = (index(a), index(b));
 
@@ -246,6 +250,10 @@ fn interest_changed(kind: Kind, field: &str, new: Option<&String>) -> u8 {
 mod tests {
     use super::*;
 
+    fn none() -> BTreeSet<String> {
+        BTreeSet::new()
+    }
+
     fn host(state: &str, miss: i32, flaps: i32) -> HostState {
         HostState { state: state.into(), miss_count: miss, flaps }
     }
@@ -297,7 +305,7 @@ mod tests {
             ],
             vec![svc("10.0.0.10", 80, "1.27", 0.8), svc("10.0.0.12", 80, "1.27", 1.0), http("10.0.0.12", "Admin login", true)],
         );
-        let d = diff(&a, &b, 3);
+        let d = diff(&a, &b, 3, &none());
 
         let gone = d.iter().find(|e| e.entity == "10.0.0.11").unwrap();
         assert_eq!((gone.change, gone.confidence), (Change::Gone, 0.33), "unconfirmed gone = 1/3");
@@ -317,11 +325,11 @@ mod tests {
     fn inactive_and_reappeared() {
         let a = snap(&[("h", host("unstable", 2, 0))], vec![]);
         let b = snap(&[("h", host("inactive", 3, 0))], vec![]);
-        let d = diff(&a, &b, 3);
+        let d = diff(&a, &b, 3, &none());
         assert_eq!((d[0].change, d[0].confidence, d[0].new_value.as_deref()), (Change::Gone, 1.0, Some("inactive")));
 
         let c = snap(&[("h", host("active", 0, 1))], vec![]);
-        let d = diff(&b, &c, 3);
+        let d = diff(&b, &c, 3, &none());
         assert_eq!((d[0].change, d[0].new_value.as_deref()), (Change::Changed, Some("active")));
         assert_eq!(d[0].confidence, 0.5, "flapping host: changes are less certain");
     }
@@ -330,14 +338,24 @@ mod tests {
     fn port_closed_on_live_host_is_reported() {
         let a = snap(&[("h", host("active", 0, 0))], vec![svc("h", 22, "9", 1.0), svc("h", 3306, "8", 1.0)]);
         let b = snap(&[("h", host("active", 0, 0))], vec![svc("h", 22, "9", 1.0)]);
-        let d = diff(&a, &b, 3);
+        let d = diff(&a, &b, 3, &none());
         assert_eq!(d.len(), 1);
         assert_eq!((d[0].change, d[0].entity.as_str(), d[0].interest), (Change::Gone, "h:3306/tcp", 2));
     }
 
     #[test]
+    fn uncovered_addresses_are_not_reported() {
+        // T-07/T-08: .11 was removed from the targets (or its batch failed), .12 was added.
+        let a = snap(&[("10.0.0.10", host("active", 0, 0)), ("10.0.0.11", host("active", 0, 0))], vec![svc("10.0.0.11", 80, "2.4", 1.0)]);
+        let b = snap(&[("10.0.0.10", host("active", 0, 0)), ("10.0.0.12", host("active", 0, 0))], vec![svc("10.0.0.12", 80, "1", 1.0)]);
+        let skip: BTreeSet<String> = ["10.0.0.11".to_string(), "10.0.0.12".to_string()].into();
+        assert!(diff(&a, &b, 3, &skip).is_empty());
+        assert!(!diff(&a, &b, 3, &none()).is_empty());
+    }
+
+    #[test]
     fn identical_runs_have_no_diff() {
         let a = snap(&[("h", host("active", 0, 0))], vec![svc("h", 80, "1", 1.0), http("h", "x", false)]);
-        assert!(diff(&a, &a.clone(), 3).is_empty());
+        assert!(diff(&a, &a.clone(), 3, &none()).is_empty());
     }
 }

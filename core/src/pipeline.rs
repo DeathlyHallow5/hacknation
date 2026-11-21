@@ -6,6 +6,10 @@
 //! Safety: every tool gets the scan's `rate_limit_pps`; batches run sequentially so a run
 //! never exceeds that rate; tool timeouts are capped by the scan window, so a run stops at
 //! the window end and resumes from its checkpoint in the next window.
+//!
+//! Integrity: targets and scan settings are frozen per run; a batch whose tools fail is
+//! retried once at half size, then recorded as not covered and the run ends `partial`
+//! (diffed only on what it covered, never a baseline).
 
 use crate::{
     engine::{self, Tool},
@@ -21,16 +25,17 @@ use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
 
-/// Ports probed by pre-flight. With CONNECT scans an RST ("conn-refused") also proves the
-/// host is up, so these catch most live hosts; hosts that drop all of them are missed —
-/// disable `preflight` on the scan for such networks.
+/// Ports probed by pre-flight. Pre-flight only ADDS hosts that are up but have none of the
+/// scanned ports open; it never removes inputs from port discovery, since a host that
+/// ignores these probes may still have open ports (F-06).
 const PREFLIGHT_PORTS: &str = "-PS21,22,23,25,53,80,110,135,139,143,443,445,3389,8080,8443";
 /// Hard cap per tool invocation when the scan has no window.
 pub(crate) const MAX_TOOL_TIME: Duration = Duration::from_secs(30 * 60);
 /// Default period between windows if the scan has a window but no repeat interval.
 const DEFAULT_WINDOW_PERIOD_MIN: i64 = 24 * 60;
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+/// Scan settings as frozen into `scan_runs.config_snapshot` at run start.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanConfig {
     pub inactive_after_misses: i32,
     pub rate_limit_pps: i32,
@@ -78,6 +83,12 @@ pub struct RunStats {
     /// Missing hosts that answered the re-check (transient misses, not changes).
     pub recovered: u64,
     pub diff: Option<crate::history::DiffSummary>,
+    /// Diff/analysis outcome, separate from the scan status: baseline | complete | failed.
+    pub analysis: Option<String>,
+    /// Inputs whose batch failed even after a retry: (offset, count). Not covered by
+    /// this run, so they are excluded from its diff instead of reported as gone.
+    pub failed_ranges: Vec<(u64, u64)>,
+    pub hosts_failed: u64,
     pub errors: Vec<String>,
 }
 
@@ -113,11 +124,11 @@ pub struct BatchStats {
 
 #[derive(sqlx::FromRow)]
 struct RunRow {
-    scan_id: Uuid,
-    checkpoint: i32,
+    checkpoint: i64,
     window_started_at: Option<DateTime<Utc>>,
     stats: sqlx::types::Json<RunStats>,
     target_snapshot: sqlx::types::Json<Vec<Target>>,
+    config_snapshot: sqlx::types::Json<ScanConfig>,
 }
 
 /// `ports` validation shared with the API.
@@ -141,34 +152,31 @@ enum Outcome {
 }
 
 /// Execute (or resume) a run. Errors here fail the run; per-batch tool errors are
-/// recorded in stats and the run continues.
+/// retried once, then recorded in stats as uncovered and the run continues.
 pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
     let db = &state.db;
-    // Freeze targets once per run.
+    // Freeze targets and scan settings once per run (F-07): edits apply to the next run.
     sqlx::query(
-        "UPDATE scan_runs r SET target_snapshot = COALESCE((
-             SELECT jsonb_agg(jsonb_build_object('kind', t.kind, 'value', t.value) ORDER BY t.value)
-             FROM scan_targets st JOIN targets t ON t.id = st.target_id
-             WHERE st.scan_id = r.scan_id), '[]'::jsonb)
-         WHERE r.id = $1 AND r.target_snapshot IS NULL",
+        "UPDATE scan_runs r SET
+             target_snapshot = COALESCE(r.target_snapshot, (
+                 SELECT COALESCE(jsonb_agg(jsonb_build_object('kind', t.kind, 'value', t.value) ORDER BY t.value), '[]'::jsonb)
+                 FROM scan_targets st JOIN targets t ON t.id = st.target_id WHERE st.scan_id = r.scan_id)),
+             config_snapshot = COALESCE(r.config_snapshot, (
+                 SELECT to_jsonb(c) FROM (SELECT inactive_after_misses, rate_limit_pps, window_minutes,
+                     repeat_every_minutes, ports, batch_size, preflight FROM scans WHERE id = r.scan_id) c))
+         WHERE r.id = $1",
     )
     .bind(run_id)
     .execute(db)
     .await?;
 
     let run: RunRow = sqlx::query_as(
-        "SELECT scan_id, checkpoint, window_started_at, stats, target_snapshot FROM scan_runs WHERE id = $1",
+        "SELECT checkpoint, window_started_at, stats, target_snapshot, config_snapshot FROM scan_runs WHERE id = $1",
     )
     .bind(run_id)
     .fetch_one(db)
     .await?;
-    let scan: ScanConfig = sqlx::query_as(
-        "SELECT inactive_after_misses, rate_limit_pps, window_minutes, repeat_every_minutes, ports, batch_size, preflight
-         FROM scans WHERE id = $1",
-    )
-    .bind(run.scan_id)
-    .fetch_one(db)
-    .await?;
+    let scan = run.config_snapshot.0;
 
     let targets = run.target_snapshot.0;
     let total = input::total_hosts(&targets);
@@ -179,6 +187,8 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
     // batch size can adapt between batches without breaking resume.
     let mut offset = run.checkpoint.max(0) as u128;
     let mut size = stats.batch_size_current.unwrap_or(max_size).clamp(1, max_size);
+    // Offset of a batch that already failed once; a second failure there is recorded.
+    let mut retrying: Option<u128> = None;
 
     let window_start = run.window_started_at.unwrap_or_else(Utc::now);
     let deadline = scan.window_minutes.map(|m| window_start + ChronoDuration::minutes(m as i64));
@@ -186,11 +196,7 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
 
     let mut outcome = Outcome::Done;
     while offset < total {
-        let status: String = sqlx::query_scalar("SELECT status::text FROM scan_runs WHERE id = $1")
-            .bind(run_id)
-            .fetch_one(db)
-            .await?;
-        if status == "cancelled" {
+        if is_cancelled(db, run_id).await? {
             outcome = Outcome::Cancelled;
             break;
         }
@@ -214,6 +220,7 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
                 offset += hosts.len() as u128;
                 stats.hosts_done = offset as u64;
                 size = next_batch_size(hosts.len(), secs, deadline, max_size);
+                retrying = None;
             }
             Err(e) if deadline.is_some_and(|d| Utc::now() >= d) => {
                 // Window closed mid-batch: nothing of it was stored. Redo it in the next
@@ -222,12 +229,22 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
                 tracing::info!(%run_id, batch_no, next_size = size, "window closed mid-batch: {e:#}");
                 outcome = Outcome::Paused;
             }
+            Err(e) if retrying != Some(offset) => {
+                // First failure: retry the same offset at half size (isolates a bad input,
+                // rides out a transient tool error).
+                tracing::warn!(%run_id, batch_no, "batch failed, retrying at half size: {e:#}");
+                retrying = Some(offset);
+                size = (size / 2).max(1);
+            }
             Err(e) => {
-                // Skip the failing slice (recorded) rather than failing the whole run.
-                stats.error(format!("batch {batch_no} ({} inputs from offset {offset}): {e:#}", hosts.len()));
+                // Failed twice: record the slice as NOT covered (F-04) and move on.
+                stats.error(format!("batch {batch_no} ({} inputs from offset {offset}) not covered: {e:#}", hosts.len()));
+                stats.failed_ranges.push((offset as u64, hosts.len() as u64));
+                stats.hosts_failed += hosts.len() as u64;
                 stats.batches_done += 1;
                 offset += hosts.len() as u128;
                 stats.hosts_done = offset as u64;
+                retrying = None;
             }
         }
         stats.batch_size_current = Some(size);
@@ -238,7 +255,7 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
         let batches_left = (total - offset).div_ceil(size as u128) as i32;
         sqlx::query("UPDATE scan_runs SET checkpoint = $2, total_batches = $3, stats = $4 WHERE id = $1")
             .bind(run_id)
-            .bind(offset as i32)
+            .bind(offset as i64)
             .bind(stats.batches_done as i32 + batches_left)
             .bind(sqlx::types::Json(&stats))
             .execute(db)
@@ -247,39 +264,64 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
             break;
         }
     }
+    if matches!(outcome, Outcome::Done) && is_cancelled(db, run_id).await? {
+        outcome = Outcome::Cancelled;
+    }
 
-    match outcome {
+    let finished = match outcome {
         Outcome::Done => {
             crate::history::finalize(&state, &scan, run_id, &targets, &mut stats, deadline).await;
-            sqlx::query("UPDATE scan_runs SET status = 'done', finished_at = now(), stats = $2 WHERE id = $1 AND status = 'running'")
-                .bind(run_id)
-                .bind(sqlx::types::Json(&stats))
-                .execute(db)
-                .await?;
-            tracing::info!(%run_id, "run done");
+            // Some inputs were not covered: the run is usable, but only as 'partial'.
+            let status = if stats.hosts_failed > 0 { "partial" } else { "done" };
+            let n = sqlx::query(
+                "UPDATE scan_runs SET status = $3::scan_status, finished_at = now(), stats = $2
+                 WHERE id = $1 AND status = 'running'",
+            )
+            .bind(run_id)
+            .bind(sqlx::types::Json(&stats))
+            .bind(status)
+            .execute(db)
+            .await?
+            .rows_affected();
+            tracing::info!(%run_id, status, "run finished");
+            n > 0
         }
         Outcome::Paused => {
             stats.pauses += 1;
             let period = scan.repeat_every_minutes.map(i64::from).unwrap_or(DEFAULT_WINDOW_PERIOD_MIN);
             let resume_at = window_start + ChronoDuration::minutes(period);
-            sqlx::query("UPDATE scan_runs SET status = 'paused', resume_at = $2, stats = $3 WHERE id = $1 AND status = 'running'")
+            let n = sqlx::query("UPDATE scan_runs SET status = 'paused', resume_at = $2, stats = $3 WHERE id = $1 AND status = 'running'")
                 .bind(run_id)
                 .bind(resume_at)
                 .bind(sqlx::types::Json(&stats))
                 .execute(db)
-                .await?;
+                .await?
+                .rows_affected();
             tracing::info!(%run_id, %resume_at, "window closed, run paused");
+            n > 0
         }
-        Outcome::Cancelled => {
-            sqlx::query("UPDATE scan_runs SET finished_at = now(), stats = $2 WHERE id = $1")
-                .bind(run_id)
-                .bind(sqlx::types::Json(&stats))
-                .execute(db)
-                .await?;
-            tracing::info!(%run_id, "run cancelled");
-        }
+        Outcome::Cancelled => false,
+    };
+    if !finished {
+        // Cancelled (possibly while finalizing): keep 'cancelled', record the end and stats.
+        sqlx::query(
+            "UPDATE scan_runs SET finished_at = COALESCE(finished_at, now()), stats = $2
+             WHERE id = $1 AND status = 'cancelled'",
+        )
+        .bind(run_id)
+        .bind(sqlx::types::Json(&stats))
+        .execute(db)
+        .await?;
+        tracing::info!(%run_id, "run cancelled");
     }
     Ok(())
+}
+
+async fn is_cancelled(db: &sqlx::PgPool, run_id: Uuid) -> sqlx::Result<bool> {
+    sqlx::query_scalar("SELECT status = 'cancelled' FROM scan_runs WHERE id = $1")
+        .bind(run_id)
+        .fetch_one(db)
+        .await
 }
 
 /// Temporary input list for `-iL` / `-l`, removed on drop.
@@ -320,9 +362,10 @@ pub(crate) async fn run_batch(
     let left = || deadline.saturating_duration_since(tokio::time::Instant::now());
     let mut stats = BatchStats::default();
 
-    // 1) Pre-flight: drop dead addresses before the expensive stages.
+    // 1) Pre-flight: hosts that are up even with no scanned port open. It does not filter
+    //    the inputs of step 2 (F-06): "no answer to probes" is not "no services".
     let mut alive: BTreeMap<String, Option<String>> = BTreeMap::new();
-    let port_inputs: Vec<String> = if scan.preflight {
+    if scan.preflight {
         let list = ListFile::new(run_id, index, "pre", inputs.to_vec()).await?;
         let xml = engine::run(
             tools,
@@ -333,17 +376,10 @@ pub(crate) async fn run_batch(
         .await
         .context("pre-flight")?;
         alive = parse::nmap_alive(&xml)?;
-        // Keep user hostnames for naabu so domains stay attributable.
-        alive.iter().map(|(ip, name)| name.clone().unwrap_or_else(|| ip.clone())).collect()
-    } else {
-        inputs.to_vec()
-    };
-    if port_inputs.is_empty() {
-        return Ok(stats);
     }
 
-    // 2) Open ports (CONNECT scan: works without raw-socket capabilities).
-    let list = ListFile::new(run_id, index, "ports", port_inputs).await?;
+    // 2) Open ports on every input (CONNECT scan: works without raw-socket capabilities).
+    let list = ListFile::new(run_id, index, "ports", inputs.to_vec()).await?;
     let mut naabu_args = vec!["-l", list.arg(), "-s", "c", "-Pn", "-rate", &rate, "-c", &threads, "-retries", "1", "-json", "-silent"];
     match scan.ports.as_str() {
         preset @ ("100" | "1000" | "full") => naabu_args.extend(["-top-ports", preset]),
@@ -401,7 +437,9 @@ pub(crate) async fn run_batch(
             Tool::Httpx,
             &[
                 "-l", list.arg(), "-json", "-silent", "-nc", "-sc", "-title", "-server", "-td", "-favicon",
-                "-irh", "-tls-grab", "-location", "-include-chain", "-fr", "-ip",
+                // No -fr: redirects are recorded (-location), never followed, so a 30x cannot
+                // lead the scanner outside the approved targets (F-03).
+                "-irh", "-tls-grab", "-location", "-ip",
                 "-rl", &rate, "-t", &threads, "-timeout", "5", "-retries", "1",
             ],
             left(),

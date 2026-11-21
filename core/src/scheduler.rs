@@ -33,13 +33,24 @@ pub async fn run(state: AppState) {
                         let permit = slots.clone().acquire_owned().await.expect("semaphore open");
                         let state = state.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = pipeline::execute_run(state.clone(), run_id).await {
-                                tracing::error!(%run_id, "run failed: {e:#}");
+                            // Inner task so a panic is caught here instead of leaving the
+                            // run 'running' until the next restart (R-02).
+                            let error = match tokio::spawn(pipeline::execute_run(state.clone(), run_id)).await {
+                                Ok(Ok(())) => None,
+                                Ok(Err(e)) => Some(format!("{e:#}")),
+                                Err(e) => Some(format!("run task crashed: {e}")),
+                            };
+                            if let Some(error) = error {
+                                tracing::error!(%run_id, "run failed: {error}");
+                                // A cancelled run stays cancelled (F-09): only the error and
+                                // the end time are recorded.
                                 let _ = sqlx::query(
-                                    "UPDATE scan_runs SET status = 'failed', error = $2, finished_at = now() WHERE id = $1",
+                                    "UPDATE scan_runs SET error = $2, finished_at = COALESCE(finished_at, now()),
+                                         status = CASE WHEN status = 'cancelled' THEN status ELSE 'failed' END
+                                     WHERE id = $1 AND status IN ('running', 'cancelled')",
                                 )
                                 .bind(run_id)
-                                .bind(format!("{e:#}"))
+                                .bind(error)
                                 .execute(&state.db)
                                 .await;
                             }
