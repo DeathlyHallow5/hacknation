@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ellipsis, FileUp, Plus, Trash2 } from "lucide-react";
+import { Ellipsis, FileUp, Plus, RotateCw, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
@@ -17,6 +17,7 @@ import { Panel, Progress, Tabs, TabsContent, TabsList, TabsTrigger } from "@/com
 import { ConfirmDialog, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/overlays";
 import { SimpleSelect } from "@/components/ui/select";
 import { ProfilesTab } from "@/features/scans/profiles-tab";
+import { canRescan, useRescan } from "@/features/scans/rescan";
 import { SchedulesTab } from "@/features/scans/schedules-tab";
 import { errorMessage } from "@/lib/api/client";
 import { api } from "@/lib/api/endpoints";
@@ -62,6 +63,7 @@ function RunsTab({ onImport }: { onImport: () => void }) {
   const [source, setSource] = React.useState("");
   const [page, setPage] = React.useState(1);
   const [toDelete, setToDelete] = React.useState<ScanRun | null>(null);
+  const { rescan, pending: rescanning } = useRescan();
   const q = useQuery({
     queryKey: ["scans", status, source, page],
     queryFn: () => api.scans.list({ status, source, page, page_size: 15 }),
@@ -145,6 +147,9 @@ function RunsTab({ onImport }: { onImport: () => void }) {
             <DropdownMenuContent>
               <DropdownMenuItem disabled={s.status !== "completed" || s.source !== "scanner"} onSelect={() => router.push(`/changes?head=${s.id}`)}>
                 Porównaj z poprzednim
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={!can("scans:create") || !canRescan(s) || Boolean(rescanning)} onSelect={() => void rescan(s)}>
+                <RotateCw /> Skanuj ponownie
               </DropdownMenuItem>
               <DropdownMenuItem destructive disabled={!can("scans:delete")} onSelect={() => setToDelete(s)}>
                 <Trash2 /> Usuń z historii
