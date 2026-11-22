@@ -105,6 +105,8 @@ fn v1_routes() -> Router<AppState> {
 pub(crate) type ApiError = (StatusCode, Json<Value>);
 #[cfg(test)]
 mod run_integrity_tests;
+#[cfg(test)]
+mod finding_identity_tests;
 pub(crate) type ApiResult<T> = Result<Json<T>, ApiError>;
 
 pub(crate) fn internal(e: impl std::fmt::Display) -> ApiError {

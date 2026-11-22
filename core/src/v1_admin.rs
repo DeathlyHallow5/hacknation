@@ -1156,17 +1156,15 @@ pub(crate) async fn auto_export(s: AppState, run_id: Uuid) {
     }
     let min = c.cfg["min_score"].as_i64().unwrap_or(70) as i32;
     let as_kind = if c.cfg["export_as"] == json!("evidence") { "evidence" } else { "finding" };
-    let scan: Option<Uuid> = match sqlx::query_scalar("SELECT scan_id FROM scan_runs WHERE id = $1").bind(run_id).fetch_optional(&s.db).await {
-        Ok(v) => v,
-        Err(e) => return tracing::warn!(%run_id, "defectdojo auto-export: {e}"),
-    };
     let all = match crate::v1::load_findings(&s.db, &s.config.data_key).await {
         Ok(a) => a,
         Err((_, Json(e))) => return tracing::warn!(%run_id, "defectdojo auto-export: {}", e["error"]["message"]),
     };
     let chosen: Vec<&crate::v1::Finding> = all
         .iter()
-        .filter(|f| Some(f.scan_id) == scan && f.effective_score() >= min && f.is_open() && f.defectdojo.is_none())
+        // Observed by this run (whichever scan saw it before): a problem has one id across
+        // scans, so one already exported is skipped instead of sent again after every scan.
+        .filter(|f| f.run_id == run_id && f.is_current() && f.effective_score() >= min && f.is_open() && f.defectdojo.is_none())
         .take(500)
         .collect();
     if chosen.is_empty() {

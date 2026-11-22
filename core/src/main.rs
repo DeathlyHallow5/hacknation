@@ -12,6 +12,7 @@ mod history;
 mod input;
 mod parse;
 mod pipeline;
+mod presence;
 mod rbac;
 mod scheduler;
 mod signatures;

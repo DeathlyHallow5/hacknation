@@ -5,9 +5,10 @@
 //! targets, findings, scan runs, search and the audit log. Anything else answers 404 and
 //! the frontend shows its own "not available" state.
 //!
-//! Findings are derived from the latest finished run of every scan (admin panels, staging,
-//! risky ports). Their ids are stable (UUIDv5 of scan + category + entity), so the analyst's
-//! status, score, assignee and notes (`finding_states`) survive every rescan.
+//! Findings are derived from the finished runs (admin panels, staging, risky ports, signature
+//! matches): one per problem, whichever scan saw it. Their ids are stable (UUIDv5 of the
+//! category and entity), so the analyst's status, score, assignee and notes (`finding_states`)
+//! survive every rescan, and a later run that no longer observes a finding marks it `gone`.
 
 use crate::{
     api::{present, ApiError},
@@ -319,7 +320,7 @@ fn address_count(kind: &str, value: &str) -> u64 {
         "cidr" => input::TargetKind::Cidr,
         _ => return 1,
     };
-    u64::try_from(input::total_hosts(&[input::Target { kind, value: value.to_string() }])).unwrap_or(u64::MAX)
+    u64::try_from(input::total_hosts(&[input::Target { kind, value: value.to_string(), except: Vec::new() }])).unwrap_or(u64::MAX)
 }
 
 /// `$1` data key; optional `$2` = only these ids.
@@ -1122,10 +1123,16 @@ pub struct Finding {
     pub(crate) notes: Option<String>,
     pub(crate) manual_overrides: Value,
     pub(crate) defectdojo: Option<Value>,
+    /// First and latest observation, across every scan that saw it.
     pub(crate) first_seen: DateTime<Utc>,
     pub(crate) last_seen: DateTime<Utc>,
+    /// Finished runs that observed it.
+    pub(crate) occurrences: usize,
+    /// Scan and run of the latest observation.
     #[serde(skip)]
     pub(crate) scan_id: Uuid,
+    #[serde(skip)]
+    pub(crate) run_id: Uuid,
     #[serde(skip)]
     pub(crate) entity_key: String,
 }
@@ -1137,17 +1144,21 @@ impl Finding {
     pub(crate) fn is_open(&self) -> bool {
         !matches!(self.status.as_str(), "false_positive" | "accepted")
     }
+    /// Not contradicted by a later run: a `gone` finding is history, not current exposure.
+    pub(crate) fn is_current(&self) -> bool {
+        self.change != "gone"
+    }
 }
 
 #[derive(sqlx::FromRow)]
 struct ObsRow {
     scan_id: Uuid,
     run_id: Uuid,
+    run_at: DateTime<Utc>,
     host_id: Uuid,
     ip: String,
     hostname: Option<String>,
     state: String,
-    first_seen_at: DateTime<Utc>,
     seen_at: DateTime<Utc>,
     service_id: Uuid,
     port: i32,
@@ -1174,8 +1185,27 @@ struct StateRow {
     defectdojo: Option<Value>,
 }
 
-/// (category, entity key, title, base score, evidence, signature id + name)
-type Candidate = (&'static str, String, String, i32, Vec<Value>, Option<(Uuid, String)>);
+/// What one observation row says is a finding.
+struct Candidate {
+    category: &'static str,
+    entity_key: String,
+    title: String,
+    base: i32,
+    evidence: Vec<Value>,
+    /// Signature id + name.
+    signature: Option<(Uuid, String)>,
+    /// (signature, service) of a signature hit: its evidence is decrypted only if shown.
+    hit: Option<(Uuid, Uuid, Option<String>)>,
+}
+
+/// A finding's latest observation (`row`) plus what the earlier ones add.
+struct Observed {
+    row: usize,
+    candidate: Candidate,
+    first_seen: DateTime<Utc>,
+    last_seen: DateTime<Utc>,
+    runs: HashSet<Uuid>,
+}
 
 /// Contract category of a signature (`technology` → `signature`).
 fn finding_category(c: &str) -> &'static str {
@@ -1192,9 +1222,11 @@ fn finding_category(c: &str) -> &'static str {
     }
 }
 
-/// Stable id of a derived finding.
-pub(crate) fn finding_id(scan_id: Uuid, category: &str, key: &str) -> Uuid {
-    Uuid::new_v5(&Uuid::NAMESPACE_URL, format!("asi:{scan_id}:{category}:{key}").as_bytes())
+/// Stable id of a finding: one per problem — its category and entity key (URL, ip:port/proto,
+/// or signature + ip:port/proto) — whichever scan or run observed it, so a rescan never makes
+/// a copy and the analyst state stays attached. Migration 0015 computes the same UUIDv5 in SQL.
+pub(crate) fn finding_id(category: &str, key: &str) -> Uuid {
+    Uuid::new_v5(&Uuid::NAMESPACE_URL, format!("asi:finding:{category}:{key}").as_bytes())
 }
 
 /// Highest criticality of the targets covering an address (+ score points).
@@ -1209,21 +1241,134 @@ fn tech_name(t: &str) -> String {
     t.split(':').next().unwrap_or(t).trim().to_string()
 }
 
-/// Derive findings from the latest finished run of every scan.
+/// Findings one observation row (host + service + HTTP finding) yields. Signature hits of a
+/// service are taken once (`hits_by_service` is drained).
+fn candidates(r: &ObsRow, hits_by_service: &mut HashMap<Uuid, Vec<crate::signatures::Hit>>) -> Vec<Candidate> {
+    let service_key = format!("{}:{}/{}", r.ip, r.port, r.protocol);
+    let mut out: Vec<Candidate> = Vec::new();
+    if let Some(url) = &r.url {
+        let title = r.title.clone().unwrap_or_else(|| url.clone());
+        let ev = vec![
+            json!({ "type": "title", "label": "Tytuł strony", "snippet": title, "highlight": null }),
+            json!({ "type": "path", "label": "Adres", "snippet": url, "highlight": null }),
+        ];
+        if r.is_admin == Some(true) {
+            out.push(Candidate {
+                category: "admin_panel",
+                entity_key: url.clone(),
+                title: format!("Panel administracyjny: {title}"),
+                base: 60,
+                evidence: ev.clone(),
+                signature: None,
+                hit: None,
+            });
+        }
+        if r.is_staging == Some(true) {
+            out.push(Candidate {
+                category: "staging",
+                entity_key: url.clone(),
+                title: format!("Środowisko testowe (staging): {url}"),
+                base: 45,
+                evidence: ev,
+                signature: None,
+                hit: None,
+            });
+        }
+    }
+    if RISKY_PORTS.contains(&(r.port as u16)) {
+        let what = [r.service.as_deref(), r.product.as_deref(), r.version.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ");
+        out.push(Candidate {
+            category: "exposure",
+            entity_key: service_key.clone(),
+            title: format!("Usługa {} dostępna z sieci ({}/{})", r.service.as_deref().unwrap_or("?"), r.port, r.protocol),
+            base: 50,
+            evidence: vec![json!({ "type": "banner", "label": "Usługa (nmap)", "snippet": what, "highlight": null })],
+            signature: None,
+            hit: None,
+        });
+    }
+    // Matches of detection signatures on this service (once per service).
+    for h in hits_by_service.remove(&r.service_id).unwrap_or_default() {
+        let title = match (&h.version, &h.technology) {
+            (Some(v), _) => format!("{} {v}", h.name),
+            _ => h.name.clone(),
+        };
+        out.push(Candidate {
+            category: finding_category(&h.category),
+            entity_key: format!("sig:{}:{service_key}", h.signature_id),
+            title,
+            base: (30 + h.score_weight).min(80),
+            evidence: Vec::new(),
+            signature: Some((h.signature_id, h.name.clone())),
+            hit: Some((h.signature_id, h.service_id, h.url.clone())),
+        });
+    }
+    out
+}
+
+/// Derive findings from every finished run: ONE per identity (`finding_id`), described by its
+/// latest observation, with first/last seen and the number of runs that observed it. When a
+/// later scanner run covered the address (and port) without observing it, the finding is
+/// `gone` — or `unstable` when the host itself did not answer (`presence::Presence::after`).
 pub(crate) async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Finding>> {
-    let rows = sqlx::query_as::<_, ObsRow>(sqlx::AssertSqlSafe(format!(
-        "WITH latest AS ({LATEST})
-         SELECT l.scan_id, l.id AS run_id, h.id AS host_id, host(h.address) AS ip, h.hostname, h.state::text AS state,
-                h.first_seen_at, h.seen_at, s.id AS service_id, s.port, s.protocol, s.service, s.product,
+    let risky: Vec<i32> = RISKY_PORTS.iter().map(|p| i32::from(*p)).collect();
+    let rows = sqlx::query_as::<_, ObsRow>(
+        "SELECT r.scan_id, r.id AS run_id, r.started_at AS run_at, h.id AS host_id, host(h.address) AS ip, h.hostname,
+                h.state::text AS state, h.seen_at, s.id AS service_id, s.port, s.protocol, s.service, s.product,
                 s.version, s.confidence, f.url, f.title, f.technologies, f.is_admin, f.is_staging
-         FROM latest l JOIN hosts h ON h.run_id = l.id JOIN services s ON s.host_id = h.id
+         FROM scan_runs r JOIN hosts h ON h.run_id = r.id JOIN services s ON s.host_id = h.id
          LEFT JOIN http_findings f ON f.service_id = s.id
-         ORDER BY h.address, s.port"
-    )))
+         WHERE r.status IN ('done', 'partial')
+           AND (s.port = ANY($1)
+                OR EXISTS (SELECT 1 FROM http_findings x WHERE x.service_id = s.id AND (x.is_admin OR x.is_staging))
+                OR EXISTS (SELECT 1 FROM signature_hits x WHERE x.service_id = s.id))
+         ORDER BY r.started_at DESC, h.address, s.port, f.url",
+    )
+    .bind(&risky)
     .fetch_all(db)
     .await
     .map_err(fail)?;
-    let run_ids: Vec<Uuid> = rows.iter().map(|r| r.run_id).collect::<HashSet<_>>().into_iter().collect();
+
+    // Technologies per service (from all its HTTP findings).
+    let mut tech_by_service: HashMap<Uuid, Vec<String>> = HashMap::new();
+    for r in &rows {
+        let entry = tech_by_service.entry(r.service_id).or_default();
+        for t in r.technologies.iter().flatten().map(|t| tech_name(t)) {
+            if !entry.contains(&t) {
+                entry.push(t);
+            }
+        }
+    }
+    let mut hits_by_service: HashMap<Uuid, Vec<crate::signatures::Hit>> = HashMap::new();
+    for h in crate::signatures::finished_hits(db).await.map_err(fail)? {
+        hits_by_service.entry(h.service_id).or_default().push(h);
+    }
+
+    // Newest run first: the first row of an identity is its latest observation.
+    let mut found: HashMap<Uuid, Observed> = HashMap::new();
+    let mut order: Vec<Uuid> = Vec::new();
+    for (i, r) in rows.iter().enumerate() {
+        for c in candidates(r, &mut hits_by_service) {
+            let id = finding_id(c.category, &c.entity_key);
+            match found.get_mut(&id) {
+                Some(o) => {
+                    o.first_seen = o.first_seen.min(r.seen_at);
+                    o.last_seen = o.last_seen.max(r.seen_at);
+                    o.runs.insert(r.run_id);
+                }
+                None => {
+                    found.insert(id, Observed { row: i, candidate: c, first_seen: r.seen_at, last_seen: r.seen_at, runs: HashSet::from([r.run_id]) });
+                    order.push(id);
+                }
+            }
+        }
+    }
+
+    let run_ids: Vec<Uuid> = found.values().map(|o| rows[o.row].run_id).collect::<HashSet<_>>().into_iter().collect();
     let changes: HashMap<(Uuid, String, String), String> = sqlx::query_as::<_, (Uuid, String, String, String)>(
         "SELECT run_b, kind, entity, change::text FROM diffs WHERE run_b = ANY($1)",
     )
@@ -1234,17 +1379,19 @@ pub(crate) async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Findin
     .into_iter()
     .map(|(run, kind, entity, change)| ((run, kind, entity), change))
     .collect();
-    // Per scan and address: finished runs that observed the host, and how many it answered.
-    let measured: HashMap<(Uuid, String), (i64, i64)> = sqlx::query_as::<_, (Uuid, String, i64, i64)>(
-        "SELECT r.scan_id, host(h.address), count(*) FILTER (WHERE h.state = 'active'), count(*)
-         FROM scan_runs r JOIN hosts h ON h.run_id = r.id
-         WHERE r.status IN ('done', 'partial') GROUP BY 1, 2",
-    )
+    let hit_keys: Vec<(Uuid, Uuid)> = found.values().filter_map(|o| o.candidate.hit.as_ref().map(|h| (h.0, h.1))).collect();
+    let mut hit_evidence = crate::signatures::hit_evidence(db, key, &hit_keys).await.map_err(fail)?;
+    let presence = crate::presence::Presence::load(db).await.map_err(fail)?;
+    // The host as the asset views show it (the most recent scan that saw the address).
+    let current_hosts: HashMap<String, Uuid> = sqlx::query_as::<_, (String, Uuid)>(sqlx::AssertSqlSafe(format!(
+        "WITH latest AS ({LATEST})
+         SELECT DISTINCT ON (h.address) host(h.address), h.id FROM latest l JOIN hosts h ON h.run_id = l.id
+         ORDER BY h.address, l.started_at DESC"
+    )))
     .fetch_all(db)
     .await
     .map_err(fail)?
     .into_iter()
-    .map(|(scan, ip, up, total)| ((scan, ip), (up, total)))
     .collect();
     let states: HashMap<Uuid, StateRow> = sqlx::query_as::<_, StateRow>(
         "SELECT finding_id, status, score_override, assignee, tags, pgp_sym_decrypt(notes_enc, $1) AS notes, defectdojo
@@ -1264,151 +1411,110 @@ pub(crate) async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Findin
     .await
     .map_err(fail)?
     .into_iter()
-    .filter_map(|(v, c)| {
-        let net = v.parse::<ipnet::IpNet>().ok().or_else(|| v.parse::<std::net::IpAddr>().ok().map(ipnet::IpNet::from))?;
-        Some((net, c))
-    })
+    .filter_map(|(v, c)| Some((input::as_net(&v)?, c)))
     .collect();
 
-    // Technologies per service (from all its HTTP findings).
-    let mut tech_by_service: HashMap<Uuid, Vec<String>> = HashMap::new();
-    for r in &rows {
-        let entry = tech_by_service.entry(r.service_id).or_default();
-        for t in r.technologies.iter().flatten().map(|t| tech_name(t)) {
-            if !entry.contains(&t) {
-                entry.push(t);
+    // Per address: finished scanner runs that covered it, and how many it answered.
+    let mut measured: HashMap<String, (usize, usize)> = HashMap::new();
+    let mut out: Vec<Finding> = Vec::with_capacity(order.len());
+    for id in order {
+        let Some(Observed { row, candidate: c, first_seen, last_seen, runs }) = found.remove(&id) else { continue };
+        let r = &rows[row];
+        let (responded, total) = *measured.entry(r.ip.clone()).or_insert_with(|| {
+            let samples = presence.samples(&r.ip, r.hostname.as_deref());
+            match samples.len() {
+                0 => (1, 1), // only imported: one observation
+                n => (samples.iter().filter(|s| s.present).count(), n),
             }
-        }
-    }
-
-    let mut out: Vec<Finding> = Vec::new();
-    let mut hits_by_service: HashMap<Uuid, Vec<crate::signatures::Hit>> = HashMap::new();
-    for h in crate::signatures::latest_hits(db, key).await.map_err(fail)? {
-        hits_by_service.entry(h.service_id).or_default().push(h);
-    }
-    let mut seen: HashSet<Uuid> = HashSet::new();
-    for r in &rows {
-        let host_change = changes.get(&(r.run_id, "host".into(), r.ip.clone()));
-        let base_change = match r.state.as_str() {
-            "unstable" => Some("unstable".to_string()),
-            "inactive" => Some("gone".to_string()),
-            _ => host_change.filter(|c| *c == "new").cloned(),
+        });
+        let entity_kind = if c.category == "exposure" || c.signature.is_some() { "service" } else { "http" };
+        // Observed through a DNS name (virtual host): only scans of that name can contradict it.
+        let vhost = match (&c.hit, entity_kind) {
+            (Some((_, _, url)), _) => url.as_deref().and_then(crate::presence::url_vhost),
+            (None, "http") => crate::presence::url_vhost(&c.entity_key),
+            _ => None,
         };
-        let service_key = format!("{}:{}/{}", r.ip, r.port, r.protocol);
-        let label = format!(
-            "{}/{}",
-            r.port,
-            r.service.as_deref().map(str::to_uppercase).unwrap_or_else(|| r.protocol.to_uppercase())
-        );
-        let (responded, total) = measured.get(&(r.scan_id, r.ip.clone())).copied().unwrap_or((1, 1));
-        let mut candidates: Vec<Candidate> = Vec::new();
-        if let Some(url) = &r.url {
-            let title = r.title.clone().unwrap_or_else(|| url.clone());
-            let ev = vec![
-                json!({ "type": "title", "label": "Tytuł strony", "snippet": title, "highlight": null }),
-                json!({ "type": "path", "label": "Adres", "snippet": url, "highlight": null }),
-            ];
-            if r.is_admin == Some(true) {
-                candidates.push(("admin_panel", url.clone(), format!("Panel administracyjny: {title}"), 60, ev.clone(), None));
-            }
-            if r.is_staging == Some(true) {
-                candidates.push(("staging", url.clone(), format!("Środowisko testowe (staging): {url}"), 45, ev, None));
-            }
+        let change = match presence.after(&r.ip, r.hostname.as_deref(), u16::try_from(r.port).ok(), vhost, r.run_at) {
+            crate::presence::Later::Gone => "gone".to_string(),
+            crate::presence::Later::HostSilent => "unstable".to_string(),
+            crate::presence::Later::NotRescanned => match r.state.as_str() {
+                "unstable" => "unstable".to_string(),
+                "inactive" => "gone".to_string(),
+                _ => changes
+                    .get(&(r.run_id, "host".into(), r.ip.clone()))
+                    .filter(|x| *x == "new")
+                    .or_else(|| changes.get(&(r.run_id, entity_kind.to_string(), c.entity_key.clone())))
+                    .cloned()
+                    .unwrap_or_else(|| "unchanged".into()),
+            },
+        };
+        let mut breakdown = vec![json!({ "factor": format!("Kategoria: {}", c.category), "points": c.base })];
+        let mut score = c.base;
+        if change == "new" {
+            breakdown.push(json!({ "factor": "Nowe od poprzedniego skanu", "points": 20 }));
+            score += 20;
         }
-        if RISKY_PORTS.contains(&(r.port as u16)) {
-            let what = [r.service.as_deref(), r.product.as_deref(), r.version.as_deref()]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join(" ");
-            candidates.push((
-                "exposure",
-                service_key.clone(),
-                format!("Usługa {} dostępna z sieci ({}/{})", r.service.as_deref().unwrap_or("?"), r.port, r.protocol),
-                50,
-                vec![json!({ "type": "banner", "label": "Usługa (nmap)", "snippet": what, "highlight": null })],
-                None,
-            ));
+        if let Some((crit, points)) = criticality_points(&r.ip, &nets).filter(|(_, p)| *p > 0) {
+            breakdown.push(json!({ "factor": format!("Krytyczność zakresu: {crit}"), "points": points }));
+            score += points;
         }
-        // Matches of detection signatures on this service (once per service).
-        for h in hits_by_service.remove(&r.service_id).unwrap_or_default() {
-            let title = match (&h.version, &h.technology) {
-                (Some(v), _) => format!("{} {v}", h.name),
-                _ => h.name.clone(),
-            };
-            let evidence: Vec<Value> = h
-                .evidence
+        if r.confidence < 0.6 {
+            breakdown.push(json!({ "factor": "Niska pewność identyfikacji", "points": -10 }));
+            score -= 10;
+        }
+        let evidence = match &c.hit {
+            Some((sig, svc, url)) => hit_evidence
+                .remove(&(*sig, *svc))
+                .unwrap_or_default()
                 .iter()
                 .map(|e| json!({ "type": "header", "label": "Dopasowanie sygnatury", "snippet": e, "highlight": null }))
-                .chain(h.url.iter().map(|u| json!({ "type": "path", "label": "Adres", "snippet": u, "highlight": null })))
-                .collect();
-            candidates.push((
-                finding_category(&h.category),
-                format!("sig:{}:{service_key}", h.signature_id),
-                title,
-                (30 + h.score_weight).min(80),
-                evidence,
-                Some((h.signature_id, h.name.clone())),
-            ));
-        }
-        for (category, entity_key, title, base, evidence, signature) in candidates {
-            let id = finding_id(r.scan_id, category, &entity_key);
-            if !seen.insert(id) {
-                continue;
-            }
-            let entity_kind = if category == "exposure" || signature.is_some() { "service" } else { "http" };
-            let change = base_change
-                .clone()
-                .or_else(|| changes.get(&(r.run_id, entity_kind.to_string(), entity_key.clone())).cloned())
-                .unwrap_or_else(|| "unchanged".into());
-            let mut breakdown = vec![json!({ "factor": format!("Kategoria: {category}"), "points": base })];
-            let mut score = base;
-            if change == "new" {
-                breakdown.push(json!({ "factor": "Nowe od poprzedniego skanu", "points": 20 }));
-                score += 20;
-            }
-            if let Some((crit, points)) = criticality_points(&r.ip, &nets).filter(|(_, p)| *p > 0) {
-                breakdown.push(json!({ "factor": format!("Krytyczność zakresu: {crit}"), "points": points }));
-                score += points;
-            }
-            if r.confidence < 0.6 {
-                breakdown.push(json!({ "factor": "Niska pewność identyfikacji", "points": -10 }));
-                score -= 10;
-            }
-            let st = states.get(&id);
-            out.push(Finding {
-                id,
-                title,
-                category,
-                host_id: r.host_id,
-                ip: r.ip.clone(),
-                hostname: r.hostname.clone(),
-                port: Some(r.port),
-                service_id: Some(r.service_id),
-                service_label: Some(label.clone()),
-                technologies: tech_by_service.get(&r.service_id).cloned().unwrap_or_default(),
-                change,
-                status: st.map_or("open".into(), |s| s.status.clone()),
-                score: score.clamp(0, 100),
-                score_override: st.and_then(|s| s.score_override),
-                score_breakdown: breakdown,
-                confidence: r.confidence,
-                measurements: json!({ "responded": responded, "total": total }),
-                evidence,
-                signature_id: signature.as_ref().map(|s| s.0.to_string()),
-                signature_name: signature.map(|s| s.1),
-                assignee: st.and_then(|s| s.assignee.clone()),
-                tags: st.map(|s| s.tags.clone()).unwrap_or_default(),
-                notes: st.and_then(|s| s.notes.clone()),
-                manual_overrides: json!({}),
-                defectdojo: st.and_then(|s| s.defectdojo.clone()),
-                first_seen: r.first_seen_at,
-                last_seen: r.seen_at,
-                scan_id: r.scan_id,
-                entity_key,
-            });
-        }
+                .chain(url.iter().map(|u| json!({ "type": "path", "label": "Adres", "snippet": u, "highlight": null })))
+                .collect(),
+            None => c.evidence,
+        };
+        let st = states.get(&id);
+        out.push(Finding {
+            id,
+            title: c.title,
+            category: c.category,
+            host_id: current_hosts.get(&r.ip).copied().unwrap_or(r.host_id),
+            ip: r.ip.clone(),
+            hostname: r.hostname.clone(),
+            port: Some(r.port),
+            service_id: Some(r.service_id),
+            service_label: Some(format!(
+                "{}/{}",
+                r.port,
+                r.service.as_deref().map(str::to_uppercase).unwrap_or_else(|| r.protocol.to_uppercase())
+            )),
+            technologies: tech_by_service.get(&r.service_id).cloned().unwrap_or_default(),
+            change,
+            status: st.map_or("open".into(), |s| s.status.clone()),
+            score: score.clamp(0, 100),
+            score_override: st.and_then(|s| s.score_override),
+            score_breakdown: breakdown,
+            confidence: r.confidence,
+            measurements: json!({ "responded": responded, "total": total }),
+            evidence,
+            signature_id: c.signature.as_ref().map(|s| s.0.to_string()),
+            signature_name: c.signature.map(|s| s.1),
+            assignee: st.and_then(|s| s.assignee.clone()),
+            tags: st.map(|s| s.tags.clone()).unwrap_or_default(),
+            notes: st.and_then(|s| s.notes.clone()),
+            manual_overrides: json!({}),
+            defectdojo: st.and_then(|s| s.defectdojo.clone()),
+            first_seen,
+            last_seen,
+            occurrences: runs.len(),
+            scan_id: r.scan_id,
+            run_id: r.run_id,
+            entity_key: c.entity_key,
+        });
     }
+    out.sort_by(|a, b| {
+        let ip = |f: &Finding| f.ip.parse::<std::net::IpAddr>().ok();
+        ip(a).cmp(&ip(b)).then(a.port.cmp(&b.port)).then(a.title.cmp(&b.title))
+    });
     Ok(out)
 }
 
@@ -1468,10 +1574,11 @@ pub async fn list_findings(State(s): State<AppState>, Query(q): Query<FindingsQu
     Ok(Json(paginated(items, q.page, q.page_size)))
 }
 
-/// `GET /api/v1/dashboard/top-findings?limit=&q=&change=&category=` — open findings by score.
+/// `GET /api/v1/dashboard/top-findings?limit=&q=&change=&category=` — open findings by score
+/// (current ones only: a finding a later scan no longer observed is not "top").
 pub async fn top_findings(State(s): State<AppState>, Query(q): Query<FindingsQuery>) -> V1<Json<Vec<Finding>>> {
     let mut items = filter_findings(load_findings(&s.db, &s.config.data_key).await?, &q);
-    items.retain(Finding::is_open);
+    items.retain(|f| f.is_open() && f.is_current());
     items.truncate(q.limit.unwrap_or(10).clamp(1, 100));
     Ok(Json(items))
 }
@@ -1676,7 +1783,7 @@ pub async fn summary(State(s): State<AppState>) -> V1<Json<Value>> {
             .map_err(fail)?,
     };
     let findings = load_findings(db, &s.config.data_key).await?;
-    let open: Vec<&Finding> = findings.iter().filter(|f| f.is_open()).collect();
+    let open: Vec<&Finding> = findings.iter().filter(|f| f.is_open() && f.is_current()).collect();
     let paused_window = running.first().is_some_and(|r| r.status == "paused" && r.resume_at.is_some());
     Ok(Json(json!({
         "active_hosts": active_hosts, "active_hosts_delta": delta, "active_trend": trend,
@@ -2043,9 +2150,11 @@ mod tests {
 
     #[test]
     fn finding_ids_are_stable() {
-        let scan = Uuid::nil();
-        assert_eq!(finding_id(scan, "admin_panel", "http://10.0.0.1"), finding_id(scan, "admin_panel", "http://10.0.0.1"));
-        assert_ne!(finding_id(scan, "admin_panel", "http://10.0.0.1"), finding_id(scan, "staging", "http://10.0.0.1"));
+        assert_eq!(finding_id("admin_panel", "http://10.0.0.1"), finding_id("admin_panel", "http://10.0.0.1"));
+        assert_ne!(finding_id("admin_panel", "http://10.0.0.1"), finding_id("staging", "http://10.0.0.1"));
+        // The same UUIDv5 as migration 0015 computes in SQL (values from PostgreSQL).
+        assert_eq!(finding_id("exposure", "172.30.0.13:22/tcp").to_string(), "55434363-9c8f-54c8-a7c7-6e609c5a4497");
+        assert_eq!(finding_id("admin_panel", "http://172.30.0.12:80").to_string(), "5dbf98ab-c823-5b88-83fc-66aecdd201ee");
     }
 
     #[test]
