@@ -8,7 +8,12 @@
  *                      implemented yet (501, or 404 without a JSON body) or unreachable
  *
  * Every response carries `x-asi-source: mock | upstream`.
+ *
+ * Client address: the core trusts X-Forwarded-For only from this container (ASI_TRUSTED_PROXIES
+ * on the core), so the proxy never passes on what a client sent; it forwards the address that
+ * client-ip.mjs (preloaded by the image) took from the socket, or none in `next dev`.
  */
+import { isIP } from "node:net";
 import type { NextRequest } from "next/server";
 import type { ApiMeta } from "@/lib/api/types";
 import { handleMock } from "@/mock/router";
@@ -29,6 +34,16 @@ const HOP_BY_HOP = new Set([
   "content-length",
   "content-encoding",
 ]);
+
+/** Forwarding headers a client could forge: never passed upstream as received. */
+const CLIENT_FORWARDING = new Set(["x-forwarded-for", "x-real-ip", "forwarded", "x-asi-client-ip"]);
+
+/** The client address client-ip.mjs computed from the socket (only when it is loaded). */
+function clientIp(req: NextRequest): string | null {
+  if (process.env.ASI_CLIENT_IP_PRELOAD !== "1") return null;
+  const ip = req.headers.get("x-asi-client-ip")?.trim() ?? "";
+  return isIP(ip) ? ip : null;
+}
 
 function mode(): Mode {
   const m = (process.env.ASI_API_MODE ?? "mock").toLowerCase();
@@ -56,8 +71,10 @@ function errorJson(status: number, code: string, message: string) {
 async function forward(req: NextRequest, base: string, subpath: string, body: ArrayBuffer | undefined) {
   const headers = new Headers();
   req.headers.forEach((v, k) => {
-    if (!HOP_BY_HOP.has(k.toLowerCase())) headers.set(k, v);
+    if (!HOP_BY_HOP.has(k.toLowerCase()) && !CLIENT_FORWARDING.has(k.toLowerCase())) headers.set(k, v);
   });
+  const ip = clientIp(req);
+  if (ip) headers.set("x-forwarded-for", ip);
   headers.set("x-forwarded-host", req.headers.get("host") ?? "");
   headers.set("x-forwarded-proto", req.nextUrl.protocol.replace(":", ""));
   return fetch(`${base}/api/v1${subpath}${req.nextUrl.search}`, {

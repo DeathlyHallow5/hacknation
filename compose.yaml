@@ -64,6 +64,10 @@ services:
     environment:
       DATABASE_URL: postgres://asi:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/asi
       ASI_DATA_KEY: ${ASI_DATA_KEY:?set ASI_DATA_KEY in .env (see .env.example)}
+      # Key rotation: the old key while POST /api/v1/security/encryption/rotate re-encrypts.
+      ASI_DATA_KEY_PREVIOUS: ${ASI_DATA_KEY_PREVIOUS:-}
+      # Only the dashboard (fixed address below) may name the client in X-Forwarded-For.
+      ASI_TRUSTED_PROXIES: 10.231.70.250
       ASI_ALLOWED_ORIGINS: ${ASI_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001}
       ASI_GLOBAL_PPS: ${ASI_GLOBAL_PPS:-1000}
       ASI_STOP_FILE: /run/asi-control/STOP
@@ -106,12 +110,19 @@ services:
     environment:
       ASI_API_MODE: ${ASI_API_MODE:-proxy}
       ASI_API_URL: http://core:8000
+      # Proxies in front of the dashboard whose X-Forwarded-For it reads (none here: browsers
+      # connect directly). See frontend/client-ip.mjs.
+      ASI_TRUSTED_PROXIES: ${ASI_WEB_TRUSTED_PROXIES:-}
     depends_on:
       core:
         condition: service_healthy
     # `default` is internal (no egress, and Docker publishes no ports from it): `edge` carries
-    # only the dashboard's published port. The core stays on internal networks.
-    networks: [default, edge]
+    # only the dashboard's published port. The core stays on internal networks. The fixed
+    # address is the one the core trusts for X-Forwarded-For (ASI_TRUSTED_PROXIES).
+    networks:
+      default:
+        ipv4_address: 10.231.70.250
+      edge: {}
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -517,6 +528,11 @@ services:
 networks:
   default:
     internal: true
+    # Fixed so the dashboard's address is known; automatic addresses come from the lower half.
+    ipam:
+      config:
+        - subnet: 10.231.70.0/24
+          ip_range: 10.231.70.0/25
   edge: {}
   dojo:
     internal: true
