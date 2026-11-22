@@ -199,9 +199,9 @@ pub async fn load(db: &PgPool, run_id: Uuid, key: &str) -> sqlx::Result<Loaded> 
     let http: Vec<HttpRow> = sqlx::query_as(
         "SELECT host(h.address) AS address, s.port, f.url, f.status_code, f.title, f.technologies, f.cms,
                 f.favicon_hash, f.is_admin, f.is_staging, f.redirects,
-                pgp_sym_decrypt(f.headers_enc, $2)::jsonb AS headers,
-                pgp_sym_decrypt(f.cookies_enc, $2)::jsonb AS cookies,
-                pgp_sym_decrypt(f.tls_enc, $2)::jsonb AS tls
+                asi_decrypt(f.headers_enc, $2)::jsonb AS headers,
+                asi_decrypt(f.cookies_enc, $2)::jsonb AS cookies,
+                asi_decrypt(f.tls_enc, $2)::jsonb AS tls
          FROM http_findings f JOIN services s ON s.id = f.service_id JOIN hosts h ON h.id = s.host_id
          WHERE h.run_id = $1",
     )

@@ -541,7 +541,7 @@ struct EvidenceRow {
 async fn load_probes(db: &sqlx::PgPool, key: &str, run: Option<Uuid>, service: Option<Uuid>) -> sqlx::Result<BTreeMap<Uuid, Vec<Probe>>> {
     type ProbeRow = (Uuid, String, Option<i32>, Option<String>, Option<String>);
     let rows: Vec<ProbeRow> = sqlx::query_as(
-        "SELECT service_id, path, status_code, title, pgp_sym_decrypt(body_enc, $3) FROM http_probes
+        "SELECT service_id, path, status_code, title, asi_decrypt(body_enc, $3) FROM http_probes
          WHERE ($1::uuid IS NULL OR run_id = $1) AND ($2::uuid IS NULL OR service_id = $2)",
     )
     .bind(run)
@@ -561,8 +561,8 @@ pub async fn evaluate_run(db: &sqlx::PgPool, key: &str, run_id: Uuid) -> sqlx::R
     let sigs = load_active(db).await?;
     let rows = sqlx::query_as::<_, EvidenceRow>(
         "SELECT s.id AS service_id, f.url, f.status_code, f.title, f.favicon_hash, f.technologies, s.product, s.version,
-                pgp_sym_decrypt(f.headers_enc, $2)::jsonb AS headers, pgp_sym_decrypt(f.cookies_enc, $2)::jsonb AS cookies,
-                pgp_sym_decrypt(f.body_enc, $2) AS body
+                asi_decrypt(f.headers_enc, $2)::jsonb AS headers, asi_decrypt(f.cookies_enc, $2)::jsonb AS cookies,
+                asi_decrypt(f.body_enc, $2) AS body
          FROM hosts h JOIN services s ON s.host_id = h.id LEFT JOIN http_findings f ON f.service_id = s.id
          WHERE h.run_id = $1",
     )
@@ -696,7 +696,7 @@ pub async fn latest_hits(db: &sqlx::PgPool, key: &str) -> sqlx::Result<Vec<Hit>>
             "WITH latest AS (SELECT DISTINCT ON (scan_id) id, scan_id FROM scan_runs
                  WHERE status IN ('done', 'partial') ORDER BY scan_id, started_at DESC)
              SELECT h.service_id, s.id AS signature_id, s.name, s.category, s.technology, s.score_weight, h.url,
-                    h.extracted_version AS version, pgp_sym_decrypt(h.evidence_enc, $1) AS evidence
+                    h.extracted_version AS version, asi_decrypt(h.evidence_enc, $1) AS evidence
              FROM signature_hits h JOIN latest l ON l.id = h.run_id JOIN signatures s ON s.id = h.signature_id
              WHERE s.enabled",
         )
@@ -900,8 +900,8 @@ pub async fn test(State(s): State<AppState>, Json(b): Json<TestBody>) -> Result<
         TestTarget::Service { service_id } => {
             let r = sqlx::query_as::<_, EvidenceRow>(
                 "SELECT s.id AS service_id, f.url, f.status_code, f.title, f.favicon_hash, f.technologies, s.product, s.version,
-                        pgp_sym_decrypt(f.headers_enc, $2)::jsonb AS headers, pgp_sym_decrypt(f.cookies_enc, $2)::jsonb AS cookies,
-                        pgp_sym_decrypt(f.body_enc, $2) AS body
+                        asi_decrypt(f.headers_enc, $2)::jsonb AS headers, asi_decrypt(f.cookies_enc, $2)::jsonb AS cookies,
+                        asi_decrypt(f.body_enc, $2) AS body
                  FROM services s LEFT JOIN http_findings f ON f.service_id = s.id WHERE s.id = $1 LIMIT 1",
             )
             .bind(service_id)

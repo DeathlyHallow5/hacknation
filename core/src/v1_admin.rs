@@ -5,6 +5,7 @@ use crate::{
     audit::Note,
     auth::{self, CurrentUser, CustomRole},
     engine::Tool,
+    keyring,
     rbac::{self, Role},
     v1::{err, fail, invalid, missing, permissions, role_meta, text, V1},
     AppState,
@@ -17,7 +18,6 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -140,56 +140,88 @@ pub async fn update_settings(
     Ok((Extension(note), Json(next)))
 }
 
-/// `GET /api/v1/security/encryption` — what is actually encrypted and with which key.
+/// `GET /api/v1/security/encryption` — what is actually encrypted, with which key, and how far
+/// a key rotation has got (keyring.rs).
 pub async fn encryption(State(s): State<AppState>) -> V1<Json<Value>> {
-    let key_id = format!("sha256:{}", &hex(&Sha256::digest(s.config.data_key.as_bytes()))[..12]);
+    encryption_status(&s).await.map(Json)
+}
+
+async fn encryption_status(s: &AppState) -> V1<Value> {
     let since: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT min(installed_on) FROM _sqlx_migrations")
         .fetch_one(&s.db)
         .await
         .map_err(fail)?;
+    let rotated: Option<DateTime<Utc>> = sqlx::query_scalar(
+        "SELECT max(at) FROM audit_log WHERE action = 'encryption.rotate.finish' AND outcome = 'success'",
+    )
+    .fetch_one(&s.db)
+    .await
+    .map_err(fail)?;
     // A live round-trip proves the key works in this database.
     let ok: bool = sqlx::query_scalar("SELECT pgp_sym_decrypt(pgp_sym_encrypt('asi', $1), $1) = 'asi'")
         .bind(&s.config.data_key)
         .fetch_one(&s.db)
         .await
         .map_err(fail)?;
-    let fields = [
-        ("http_findings", "headers_enc", "Nagłówki odpowiedzi HTTP"),
-        ("http_findings", "cookies_enc", "Ciasteczka (Set-Cookie)"),
-        ("http_findings", "tls_enc", "Szczegóły certyfikatów TLS"),
-        ("http_findings", "raw_enc", "Surowy wynik httpx"),
-        ("services", "banner_enc", "Banery usług"),
-        ("run_artifacts", "content_enc", "Surowe wyniki skanerów (nmap, naabu, httpx)"),
-        ("diffs", "old_enc / new_enc", "Wartości w porównaniach przebiegów"),
-        ("finding_states", "notes_enc", "Notatki analityków do znalezisk"),
-        ("annotations", "notes_enc", "Notatki w adnotacjach"),
-        ("targets", "notes_enc", "Notatki do celów"),
-        ("signature_hits", "evidence_enc", "Dowody dopasowań sygnatur"),
-        ("settings", "secret_enc", "Token API DefectDojo"),
-    ];
-    Ok(Json(json!({
+    let progress = keyring::progress();
+    Ok(json!({
         "enabled": ok,
         "algorithm": "OpenPGP symetryczny (pgcrypto pgp_sym_encrypt, AES-128)",
         "provider": "PostgreSQL pgcrypto; klucz ASI_DATA_KEY tylko w zmiennych środowiska aplikacji",
-        "key_id": key_id,
+        "key_id": keyring::key_id(&s.config.data_key),
         "key_created_at": since,
-        "rotated_at": since,
-        "encrypted_fields": fields.iter().map(|(t, c, d)| json!({ "table": t, "column": c, "description": d })).collect::<Vec<_>>(),
+        "rotated_at": rotated.or(since),
+        // Set while ASI_DATA_KEY_PREVIOUS is configured: reads fall back to it until rotated.
+        "previous_key_id": s.config.data_key_previous.as_deref().map(keyring::key_id),
+        "rows_under_previous_key": progress.remaining_previous,
+        "rotation": progress,
+        "encrypted_fields": keyring::COLUMNS
+            .iter()
+            .map(|c| json!({ "table": c.table, "column": c.column, "description": c.description }))
+            .collect::<Vec<_>>(),
         "last_check_at": Utc::now(),
-    })))
+    }))
 }
 
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
-/// `POST /api/v1/security/encryption/rotate` — not implemented: says so.
-pub async fn rotate_key() -> crate::api::ApiError {
-    err(
-        StatusCode::NOT_IMPLEMENTED,
-        "not_implemented",
-        "Rotacja klucza nie jest jeszcze dostępna: wymaga ponownego zaszyfrowania wszystkich pól nowym kluczem.",
-    )
+/// `POST /api/v1/security/encryption/rotate` — re-encrypt every row still under
+/// `ASI_DATA_KEY_PREVIOUS` with `ASI_DATA_KEY`. Runs in the background; answers with the status
+/// once done (200) or, for a large database, after a short wait while it continues (202).
+pub async fn rotate_key(
+    State(s): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+) -> V1<(StatusCode, Extension<Note>, Json<Value>)> {
+    match keyring::start_rotation(s.clone(), user.id) {
+        Ok(()) => {}
+        Err(keyring::StartError::NoPreviousKey) => {
+            return Err(err(
+                StatusCode::CONFLICT,
+                "no_previous_key",
+                "Brak poprzedniego klucza. Rotacja: ustaw nowy klucz w ASI_DATA_KEY, dotychczasowy w \
+                 ASI_DATA_KEY_PREVIOUS, uruchom usługę ponownie i wykonaj rotację.",
+            ));
+        }
+        Err(keyring::StartError::Running) => {
+            return Err(err(StatusCode::CONFLICT, "rotation_running", "Rotacja klucza już trwa."));
+        }
+    }
+    let waited = Instant::now();
+    while keyring::progress().state == "rotating" && waited.elapsed() < Duration::from_secs(15) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let status = encryption_status(&s).await?;
+    let state = status["rotation"]["state"].as_str().unwrap_or_default().to_string();
+    if state == "failed" {
+        let message = status["rotation"]["error"].as_str().unwrap_or("Rotacja nie powiodła się.").to_string();
+        return Err(err(StatusCode::INTERNAL_SERVER_ERROR, "rotation_failed", message));
+    }
+    let note = Note {
+        action: "encryption.rotate",
+        entity: "encryption",
+        entity_id: None,
+        details: json!({ "key_id": status["key_id"], "previous_key_id": status["previous_key_id"] }),
+    };
+    let code = if state == "rotating" { StatusCode::ACCEPTED } else { StatusCode::OK };
+    Ok((code, Extension(note), Json(status)))
 }
 
 /// `GET /api/v1/engines` — installed scanners and their versions.
@@ -689,7 +721,7 @@ fn dojo_defaults(s: &AppState) -> Value {
 
 pub(crate) async fn dojo_config(s: &AppState) -> V1<DojoConfig> {
     let row: Option<(Value, Option<String>)> =
-        sqlx::query_as("SELECT value, pgp_sym_decrypt(secret_enc, $1) FROM settings WHERE key = 'defectdojo'")
+        sqlx::query_as("SELECT value, asi_decrypt(secret_enc, $1) FROM settings WHERE key = 'defectdojo'")
             .bind(&s.config.data_key)
             .fetch_optional(&s.db)
             .await
