@@ -201,11 +201,14 @@ struct Tuning {
     port_count: u64,
 }
 
-fn tuning(cfg: &Value, settings: &Value) -> Tuning {
+/// `approved`: the administrator's port allowlist (`ASI_ALLOWED_PORTS`); the "allowed" preset
+/// means exactly those ports. Empty (no policy) = the dashboard setting `scan_safety.allowed_ports`.
+fn tuning(cfg: &Value, settings: &Value, approved: &std::collections::BTreeSet<u16>) -> Tuning {
     let max = settings["scan_safety"]["max_rate_rps"].as_i64().unwrap_or(1000) as i32;
     let rate = (cfg["rate_limit_rps"].as_i64().unwrap_or(100) as i32).clamp(1, max.max(1));
     let ports = match cfg["ports"]["preset"].as_str() {
         Some("top1000") => "1000".to_string(),
+        Some("allowed") if !approved.is_empty() => approved.iter().map(u16::to_string).collect::<Vec<_>>().join(","),
         Some("allowed") => settings["scan_safety"]["allowed_ports"].as_str().unwrap_or("100").to_string(),
         Some("custom") => cfg["ports"]["custom"].as_str().unwrap_or("100").to_string(),
         _ => "100".to_string(),
@@ -301,17 +304,33 @@ async fn estimate_value(s: &AppState, target_ids: &[Uuid], profile_id: Uuid, win
         return Err(invalid("Wybierz co najmniej jeden cel."));
     }
     let targets = v1::load_targets(&s.db, &s.config.data_key, Some(target_ids)).await?;
+    if let Some(t) = targets.iter().find(|t| !t.excluded && !s.config.permits_target(&t.value)) {
+        return Err(invalid(format!(
+            "Cel {} jest poza zakresem zatwierdzonym przez administratora (ASI_ALLOWED_CIDRS) — skaner go nie obejmie.",
+            t.value
+        )));
+    }
     if targets.is_empty() {
         return Err(invalid("Wybrane cele nie istnieją."));
     }
     let addresses: u64 = targets.iter().filter(|t| !t.excluded).map(|t| t.address_count).fold(0, u64::saturating_add);
     let excluded: u64 = targets.iter().filter(|t| t.excluded).map(|t| t.address_count).sum();
-    let t = tuning(&p.config, &settings);
+    let t = tuning(&p.config, &settings, &s.config.allowed_ports);
+    if !s.config.permits_ports(&t.ports) {
+        return Err(invalid(
+            "Profil używa portów spoza listy zatwierdzonej przez administratora (ASI_ALLOWED_PORTS). Wybierz profil z portami „Dozwolone” (np. „Laboratorium”) albo wpisz porty z tej listy.",
+        ));
+    }
     let rate = t.rate as f64;
     let est_alive = ((addresses as f64) * 0.19).round().max(1.0);
-    // Discovery + port probes on live hosts + HTTP fingerprint (same model as the dashboard mock).
-    let seconds = ((addresses as f64) * 2.0 / rate + est_alive * t.port_count as f64 * 0.9 / rate + est_alive * 0.4 * 6.0 / rate).round().max(1.0);
     let batches = addresses.div_ceil(t.batch_size.max(1) as u64).max(1);
+    // Every address gets the pre-flight probes and every port probe (naabu -Pn), all under the
+    // rate limit; then ~6 s per batch for -sV and httpx, ~20 s per run (start, diff, signatures).
+    // Measured: lab /28 top-100 at 100/s: 42 s (model 42 s); lab /24: 280 s (318 s);
+    // /18, 8 ports at 1000/s: 476 s (493 s) — docs/BENCHMARK.md.
+    // Pre-flight probes the profile's own ports (`-PS<ports>`), then naabu probes them again.
+    let probes_per_address = (2 * t.port_count) as f64;
+    let seconds = ((addresses as f64) * probes_per_address / rate + batches as f64 * 6.0 + 20.0).round();
     let win = window.cloned().unwrap_or_else(|| default_window(&settings));
     let window_seconds = window_minutes(&win) * 60;
     let mut notes = Vec::new();
@@ -455,7 +474,7 @@ pub async fn create_scan(
     }
     let settings = load_settings(&s.db).await?;
     let p = profile(&s.db, b.profile_id).await?;
-    let t = tuning(&p.config, &settings);
+    let t = tuning(&p.config, &settings, &s.config.allowed_ports);
     let tags = clean_tags(&b.tags)?;
     let notes = text(b.notes.as_deref(), "notes", 5000, true)?;
     let mut tx = s.db.begin().await.map_err(fail)?;
@@ -468,17 +487,23 @@ pub async fn create_scan(
     // The scheduler picks the run up at `resume_at` (now, or when the window opens).
     let wait_for_window = b.start.as_deref() == Some("window") && b.window.is_some();
     let run: Uuid = sqlx::query_scalar(
-        "INSERT INTO scan_runs (scan_id, status, resume_at, tags, notes)
+        "INSERT INTO scan_runs (scan_id, status, resume_at, tags, notes, ignore_window, stats)
          SELECT s.id, 'paused',
                 CASE WHEN $2 AND asi_window_close(s.window_start, s.window_end, s.timezone, s.schedule_days, now()) IS NULL
                      THEN asi_next_window_open(s.window_start, s.timezone, s.schedule_days, now()) ELSE now() END,
-                $3, $4
+                $3, $4,
+                -- \"Teraz\" with the window closed: run now, without it (migration 0011).
+                NOT $2 AND s.window_start IS NOT NULL
+                    AND asi_window_close(s.window_start, s.window_end, s.timezone, s.schedule_days, now()) IS NULL,
+                -- Address count shown before the pipeline starts (it sets the same value).
+                jsonb_build_object('hosts_total', $5::bigint)
          FROM scans s WHERE s.id = $1 RETURNING id",
     )
     .bind(scan)
     .bind(wait_for_window)
     .bind(&tags)
     .bind(&notes)
+    .bind(addresses as i64)
     .fetch_one(&mut *tx)
     .await
     .map_err(fail)?;
@@ -649,10 +674,20 @@ fn logs_of(run: &v1::RunRow, view: &Value) -> Vec<Value> {
             ),
         ));
     }
-    if let Some(r) = run.resume_at.filter(|_| run.status == "paused") {
-        out.push(log_line(Utc::now(), "warn", format!("Okno zamknięte — wznowienie o {}", r.to_rfc3339())));
-    } else if run.status == "paused" {
-        out.push(log_line(Utc::now(), "warn", "Wstrzymano na żądanie użytkownika"));
+    if run.status == "paused" {
+        let at = |t: DateTime<Utc>| t.format("%d.%m.%Y %H:%M UTC").to_string();
+        match run.resume_at {
+            // Not started yet: waiting for the scheduler (a few seconds) or for its window. A fixed
+            // time (the run's creation), so polling clients see one line, not one per poll.
+            Some(r) if run.window_started_at.is_none() && r <= Utc::now() => {
+                out.push(log_line(run.started_at, "info", "W kolejce — skaner zaraz rozpocznie pracę"))
+            }
+            Some(r) if run.window_started_at.is_none() => {
+                out.push(log_line(run.started_at, "info", format!("Czeka na okno skanowania — start {}", at(r))))
+            }
+            Some(r) => out.push(log_line(Utc::now(), "warn", format!("Okno zamknięte — wznowienie {}", at(r)))),
+            None => out.push(log_line(Utc::now(), "warn", "Wstrzymano na żądanie użytkownika")),
+        }
     }
     for e in st["errors"].as_array().into_iter().flatten().filter_map(Value::as_str) {
         out.push(log_line(run.finished_at.unwrap_or_else(Utc::now), "error", e));
@@ -800,7 +835,7 @@ pub async fn export(State(s): State<AppState>, Path(id): Path<Uuid>, Query(q): Q
                 v1::csv_text(r.hostname.as_deref().unwrap_or_default()),
                 r.state.clone(),
                 r.port.map(|p| p.to_string()).unwrap_or_default(),
-                r.protocol.clone().unwrap_or_default(),
+                v1::csv_text(r.protocol.as_deref().unwrap_or_default()),
                 v1::csv_text(r.service.as_deref().unwrap_or_default()),
                 v1::csv_text(r.product.as_deref().unwrap_or_default()),
                 v1::csv_text(r.version.as_deref().unwrap_or_default()),
@@ -910,7 +945,9 @@ fn import_rows(bytes: &[u8], filename: &str) -> Result<Vec<ImportRow>, String> {
     let headers: Vec<String> = rdr.headers().map_err(|e| e.to_string())?.iter().map(str::to_lowercase).collect();
     let col = |n: &str| headers.iter().position(|h| h == n);
     let ip_col = col("ip").ok_or("CSV: brak kolumny „ip”.")?;
-    for rec in rdr.records().filter_map(Result::ok) {
+    for (index, record) in rdr.records().enumerate() {
+        if index >= 200_000 { return Err("CSV row limit exceeded".into()); }
+        let rec = record.map_err(|_| format!("Invalid CSV record {}", index + 2))?;
         let get = |c: Option<usize>| clip(c.and_then(|i| rec.get(i)));
         let Some(ip) = get(Some(ip_col)).and_then(|i| i.parse().ok()) else { continue };
         out.push(ImportRow {
@@ -1130,7 +1167,7 @@ pub async fn create_schedule(
     let profile_id = b.profile_id.ok_or_else(|| invalid("Wybierz profil skanowania."))?;
     let settings = load_settings(&s.db).await?;
     let p = profile(&s.db, profile_id).await?;
-    let t = tuning(&p.config, &settings);
+    let t = tuning(&p.config, &settings, &s.config.allowed_ports);
     let exceeded = on_exceeded(b.on_window_exceeded.as_deref())?;
     let mut tx = s.db.begin().await.map_err(fail)?;
     let days_stored: Vec<i32> = if days.len() == 7 { vec![] } else { days };
@@ -1192,7 +1229,7 @@ pub async fn update_schedule(
     if let Some(pid) = b.profile_id {
         let settings = load_settings(&s.db).await?;
         let p = profile(&s.db, pid).await?;
-        let t = tuning(&p.config, &settings);
+        let t = tuning(&p.config, &settings, &s.config.allowed_ports);
         sqlx::query("UPDATE scans SET profile_id = $2, rate_limit_pps = $3, ports = $4, batch_size = $5 WHERE id = $1")
             .bind(id)
             .bind(pid)
@@ -1280,9 +1317,14 @@ mod tests {
     #[test]
     fn profile_tuning() {
         let settings = json!({ "scan_safety": { "max_rate_rps": 150, "allowed_ports": "22,80,8000-8009" }, "change_detection": { "inactive_after_misses": 2 } });
-        let t = tuning(&json!({ "ports": { "preset": "allowed", "custom": "" }, "rate_limit_rps": 500, "batch_strategy": "fixed", "batch_prefix": 26 }), &settings);
+        let none = Default::default();
+        let t = tuning(&json!({ "ports": { "preset": "allowed", "custom": "" }, "rate_limit_rps": 500, "batch_strategy": "fixed", "batch_prefix": 26 }), &settings, &none);
         assert_eq!((t.rate, t.ports.as_str(), t.port_count, t.batch_size, t.inactive_after_misses), (150, "22,80,8000-8009", 12, 64, 2));
-        let t = tuning(&json!({ "ports": { "preset": "top1000" }, "rate_limit_rps": 20 }), &settings);
+        // With an administrator allowlist, "allowed" means exactly those ports.
+        let approved = [443, 22, 80].into_iter().collect();
+        let t = tuning(&json!({ "ports": { "preset": "allowed", "custom": "" } }), &settings, &approved);
+        assert_eq!((t.ports.as_str(), t.port_count), ("22,80,443", 3));
+        let t = tuning(&json!({ "ports": { "preset": "top1000" }, "rate_limit_rps": 20 }), &settings, &none);
         assert_eq!((t.rate, t.ports.as_str(), t.batch_size), (20, "1000", 256));
     }
 

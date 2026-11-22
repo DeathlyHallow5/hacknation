@@ -84,7 +84,7 @@ pub(crate) fn sort_spec(sort: Option<&str>, default: &str) -> (String, bool) {
 
 /// CSV cells that a spreadsheet would run as a formula get a leading apostrophe.
 pub(crate) fn csv_text(s: &str) -> String {
-    if s.starts_with(['=', '+', '-', '@', '\t', '\r']) { format!("'{s}") } else { s.to_string() }
+    if s.starts_with(['\t', '\r', '\n']) || s.trim_start().starts_with(['=', '+', '-', '@']) { format!("'{s}") } else { s.to_string() }
 }
 
 pub(crate) fn file(content_type: &str, filename: &str, body: Vec<u8>, note: Note) -> Response {
@@ -141,12 +141,16 @@ pub(crate) fn role_meta(role: Role) -> (&'static str, &'static str, &'static str
     }
 }
 
-/// Contract permissions granted by the core RBAC (`rbac::Role::can`).
-pub(crate) fn permissions(user: &CurrentUser) -> Vec<&'static str> {
-    let mut p = Vec::new();
+/// Contract permissions of a user: a custom role's own set, else those granted by the
+/// built-in matrix (`rbac::Role::can`).
+pub(crate) fn permissions(user: &CurrentUser) -> Vec<String> {
+    if let Some(c) = &user.custom {
+        return c.permissions.clone();
+    }
+    let mut p: Vec<String> = Vec::new();
     let mut grant = |action: Action, keys: &[&'static str]| {
         if user.can(action) {
-            p.extend_from_slice(keys);
+            p.extend(keys.iter().map(|k| k.to_string()));
         }
     };
     grant(
@@ -177,18 +181,24 @@ async fn session_json(db: &sqlx::PgPool, user: &CurrentUser) -> V1<Value> {
             .fetch_one(db)
             .await
             .map_err(fail)?;
-    let (key, name, description) = role_meta(user.role);
     let perms = permissions(user);
+    let role = match &user.custom {
+        Some(c) => crate::v1_admin::custom_role_json(c, 0),
+        None => {
+            let (key, name, description) = role_meta(user.role);
+            json!({
+                "id": key, "key": key, "name": name, "description": description, "builtin": true,
+                "permissions": perms, "users_count": 0,
+            })
+        }
+    };
     Ok(json!({
         "user": {
             "id": user.id, "login": user.username, "name": user.username, "email": "",
-            "role_id": key, "role_name": name, "active": true,
+            "role_id": role["id"], "role_name": role["name"], "active": true,
             "last_login_at": last_login_at, "created_at": created_at,
         },
-        "role": {
-            "id": key, "key": key, "name": name, "description": description, "builtin": true,
-            "permissions": perms, "users_count": 0,
-        },
+        "role": role,
         "permissions": perms,
     }))
 }
@@ -218,6 +228,10 @@ pub async fn login(State(s): State<AppState>, Extension(ClientIp(ip)): Extension
         role: si.role,
         can_execute_scans: si.can_execute_scans,
         session_id: Uuid::nil(),
+        custom: match auth::custom_role_of(&s.db, si.user_id).await {
+            Ok(c) => c,
+            Err(e) => return fail(e).into_response(),
+        },
     };
     match session_json(&s.db, &user).await {
         Ok(body) => auth::with_session_cookie(Json(body).into_response(), &s, &si.token),
@@ -228,6 +242,25 @@ pub async fn login(State(s): State<AppState>, Extension(ClientIp(ip)): Extension
 /// `GET /api/v1/auth/me`
 pub async fn me(State(s): State<AppState>, Extension(user): Extension<CurrentUser>) -> V1<Json<Value>> {
     Ok(Json(session_json(&s.db, &user).await?))
+}
+
+// ---------- tags ----------
+
+/// `GET /api/v1/tags` — tags in use (targets, hosts, services, findings, scans), most used first.
+pub async fn tags(State(s): State<AppState>) -> V1<Json<Vec<Value>>> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT tag, count(*) FROM (
+             SELECT unnest(tags) AS tag FROM targets
+             UNION ALL SELECT unnest(tags) FROM finding_states
+             UNION ALL SELECT unnest(tags) FROM scans
+             UNION ALL SELECT jsonb_array_elements_text(value) FROM asset_overrides
+                 WHERE field = 'tags' AND jsonb_typeof(value) = 'array'
+         ) t WHERE tag <> '' GROUP BY tag ORDER BY count(*) DESC, tag LIMIT 60",
+    )
+    .fetch_all(&s.db)
+    .await
+    .map_err(fail)?;
+    Ok(Json(rows.into_iter().map(|(name, count)| json!({ "name": name, "count": count })).collect()))
 }
 
 // ---------- targets ----------
@@ -743,7 +776,9 @@ fn parse_import(bytes: &[u8], filename: &str) -> Result<(&'static str, Vec<Targe
         return Ok(("json", rows));
     }
     let mut rdr = csv::ReaderBuilder::new().has_headers(false).flexible(true).trim(csv::Trim::All).from_reader(text.as_bytes());
-    let mut records = rdr.records().filter_map(Result::ok).filter(|r| r.iter().any(|c| !c.is_empty())).peekable();
+    let records = rdr.records().take(50_002).collect::<Result<Vec<_>, _>>().map_err(|_| "Invalid CSV record".to_owned())?;
+    if records.len() > 50_001 { return Err("CSV row limit exceeded".into()); }
+    let mut records = records.into_iter().filter(|r| r.iter().any(|c| !c.is_empty())).peekable();
     let header: Option<Vec<String>> = records.peek().and_then(|r| {
         let first = r.get(0).unwrap_or_default().to_lowercase();
         ["value", "target", "cel", "adres", "address"].contains(&first.as_str()).then(|| r.iter().map(str::to_lowercase).collect())
@@ -1544,7 +1579,7 @@ pub async fn export_findings(State(s): State<AppState>, Query(q): Query<Findings
             x.category.to_string(),
             x.ip.clone(),
             csv_text(x.hostname.as_deref().unwrap_or_default()),
-            x.service_label.clone().unwrap_or_default(),
+            csv_text(x.service_label.as_deref().unwrap_or_default()),
             x.status.clone(),
             x.effective_score().to_string(),
             x.change.clone(),

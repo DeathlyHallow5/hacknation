@@ -1,0 +1,13 @@
+{
+    admin off
+    auto_https disable_redirects
+    persist_config off
+}
+https://{$ASI_PUBLIC_HOST}:8443 {
+    tls /run/secrets/tls_cert /run/secrets/tls_key
+    header Strict-Transport-Security "max-age=31536000"
+    header X-Content-Type-Options nosniff
+    header Referrer-Policy no-referrer
+    header Content-Security-Policy "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; connect-src 'self'"
+    reverse_proxy web:3000
+}

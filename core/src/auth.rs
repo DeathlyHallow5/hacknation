@@ -48,12 +48,54 @@ pub struct CurrentUser {
     pub can_execute_scans: bool,
     #[serde(skip)]
     pub session_id: Uuid,
+    /// Set for users with a custom role: their permissions replace the built-in matrix.
+    #[serde(skip)]
+    pub custom: Option<CustomRole>,
+}
+
+/// A custom role (`custom_roles`): a named set of dashboard permissions (`rbac::PERMISSIONS`).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct CustomRole {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub permissions: Vec<String>,
 }
 
 impl CurrentUser {
     pub fn can(&self, action: Action) -> bool {
-        self.role.can(action, self.can_execute_scans)
+        match &self.custom {
+            Some(c) => rbac::custom_can(&c.permissions, action),
+            None => self.role.can(action, self.can_execute_scans),
+        }
     }
+
+    /// May this user call the matched route? Custom roles: only the dashboard contract's
+    /// routes, each with its own permission (`rbac::V1_PERMS`).
+    fn may_call(&self, method: &str, path: &str, rule: Option<Rule>) -> bool {
+        match (rule, &self.custom) {
+            (Some(Rule::Public | Rule::Authenticated), _) => true,
+            (Some(Rule::Requires(_)), Some(c)) => {
+                rbac::v1_perm(method, path).is_some_and(|need| c.permissions.iter().any(|p| p == need))
+            }
+            (Some(Rule::Requires(action)), None) => self.can(action),
+            (None, _) => {
+                tracing::warn!(%method, %path, "route missing from rbac::ROUTES — access denied");
+                false
+            }
+        }
+    }
+}
+
+/// The custom role of a user, if any.
+pub(crate) async fn custom_role_of(db: &sqlx::PgPool, user_id: Uuid) -> sqlx::Result<Option<CustomRole>> {
+    sqlx::query_as(
+        "SELECT r.id, r.name, r.description, r.permissions FROM users u JOIN custom_roles r ON r.id = u.custom_role_id
+         WHERE u.id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await
 }
 
 /// Client address (from the TCP connection), put into request extensions by `gate`.
@@ -132,22 +174,29 @@ pub(crate) fn session_cookie(token: &str, max_age_secs: i64, secure: bool) -> He
 }
 
 async fn session_user(db: &sqlx::PgPool, token: &str) -> sqlx::Result<Option<CurrentUser>> {
-    let row: Option<(Uuid, Uuid, String, Role, bool)> = sqlx::query_as(
+    type Row = (Uuid, Uuid, String, Role, bool, Option<Uuid>, Option<String>, Option<String>, Option<Vec<String>>);
+    let row: Option<Row> = sqlx::query_as(
         "UPDATE sessions s SET last_seen_at = now()
-         FROM users u
+         FROM users u LEFT JOIN custom_roles r ON r.id = u.custom_role_id
          WHERE s.token_hash = $1 AND u.id = s.user_id AND s.revoked_at IS NULL AND s.expires_at > now()
            AND NOT u.disabled
-         RETURNING s.id, u.id, u.username, u.role, u.can_execute_scans",
+         RETURNING s.id, u.id, u.username, u.role, u.can_execute_scans, r.id, r.name, r.description, r.permissions",
     )
     .bind(token_hash(token))
     .fetch_optional(db)
     .await?;
-    Ok(row.map(|(session_id, id, username, role, can_execute_scans)| CurrentUser {
+    Ok(row.map(|(session_id, id, username, role, can_execute_scans, rid, rname, rdesc, rperms)| CurrentUser {
         id,
         username,
         role,
         can_execute_scans,
         session_id,
+        custom: rid.map(|id| CustomRole {
+            id,
+            name: rname.unwrap_or_default(),
+            description: rdesc.unwrap_or_default(),
+            permissions: rperms.unwrap_or_default(),
+        }),
     }))
 }
 
@@ -283,15 +332,9 @@ pub async fn gate(State(s): State<AppState>, req: Request, next: Next) -> Respon
     let via_cookie = token.is_some_and(|(_, c)| c);
     let csrf_ok = !via_cookie
         || is_safe(&method)
-        || parts.headers.get(CSRF_HEADER).is_some_and(|v| v.as_bytes() == b"1");
-    let allowed = match rule {
-        Some(Rule::Public | Rule::Authenticated) => true,
-        Some(Rule::Requires(action)) => user.can(action),
-        None => {
-            tracing::warn!(%method, %path, "route missing from rbac::ROUTES — admin only");
-            user.role == Role::Admin
-        }
-    };
+        || (parts.headers.get(CSRF_HEADER).is_some_and(|v| v.as_bytes() == b"1")
+            && parts.headers.get(header::ORIGIN).is_some_and(|v| s.config.allowed_origins.iter().any(|origin| v.as_bytes() == origin.as_bytes())));
+    let allowed = user.may_call(method.as_str(), &path, rule);
     if !csrf_ok || !allowed {
         audit::record(&s.db, audit_row(Some(&user), StatusCode::FORBIDDEN, None)).await;
         return deny(StatusCode::FORBIDDEN);

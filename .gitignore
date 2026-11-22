@@ -21,3 +21,4 @@ tools/nuclei-templates/
 .claude/worktrees/
 .vs/
 __pycache__/
+.local-backups/

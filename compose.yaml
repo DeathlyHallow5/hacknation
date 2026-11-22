@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_DB: asi
       POSTGRES_USER: asi
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-asi-dev-password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
@@ -24,11 +24,18 @@ services:
         BASE_REGISTRY: ${ASI_BASE_REGISTRY:-docker.io/library}
     init: true
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:${ASI_API_PORT:-8000}:8000"
+    # No host port: the core sits on internal networks only (no egress). Scripts that call the
+    # core API directly (scripts/*.sh, scripts/bench) need compose.api.yaml on top.
     environment:
-      DATABASE_URL: postgres://asi:${POSTGRES_PASSWORD:-asi-dev-password}@db:5432/asi
+      DATABASE_URL: postgres://asi:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/asi
       ASI_DATA_KEY: ${ASI_DATA_KEY:?set ASI_DATA_KEY in .env (see .env.example)}
+      ASI_ALLOWED_ORIGINS: ${ASI_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001}
+      ASI_GLOBAL_PPS: ${ASI_GLOBAL_PPS:-1000}
+      ASI_STOP_FILE: /run/asi-control/STOP
+      ASI_ALLOWED_PORTS: ${ASI_ALLOWED_PORTS:-22,80,443,3306,5432,6379,8080,8443}
+      ASI_EXCLUDED_CIDRS: ${ASI_EXCLUDED_CIDRS:-}
+      ASI_ALLOWED_CIDRS: ${ASI_ALLOWED_CIDRS:-172.30.0.0/24}
+      ASI_MAX_RUNS: ${ASI_MAX_RUNS:-1}
       ASI_MAX_CONCURRENCY: ${ASI_MAX_CONCURRENCY:-256}
       ASI_ADMIN_USER: ${ASI_ADMIN_USER:-admin}
       ASI_ADMIN_PASSWORD: ${ASI_ADMIN_PASSWORD:-}
@@ -39,6 +46,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes: [./deploy/control:/run/asi-control:ro]
     networks: [default, lab]
     security_opt:
       - no-new-privileges:true
@@ -62,6 +70,9 @@ services:
     depends_on:
       core:
         condition: service_healthy
+    # `default` is internal (no egress, and Docker publishes no ports from it): `edge` carries
+    # only the dashboard's published port. The core stays on internal networks.
+    networks: [default, edge]
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -97,6 +108,9 @@ services:
         ipv4_address: 172.30.0.12
 
 networks:
+  default:
+    internal: true
+  edge: {}
   lab:
     internal: true
     ipam:

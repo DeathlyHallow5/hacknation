@@ -25,10 +25,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
 
-/// Ports probed by pre-flight. Pre-flight only ADDS hosts that are up but have none of the
-/// scanned ports open; it never removes inputs from port discovery, since a host that
-/// ignores these probes may still have open ports (F-06).
-const PREFLIGHT_PORTS: &str = "-PS21,22,23,25,53,80,110,135,139,143,443,445,3389,8080,8443";
 /// Hard cap per tool invocation when the scan has no window.
 pub(crate) const MAX_TOOL_TIME: Duration = Duration::from_secs(30 * 60);
 /// Default period between windows if the scan has a window but no repeat interval.
@@ -230,6 +226,8 @@ pub struct BatchStats {
 struct RunRow {
     checkpoint: i64,
     window_started_at: Option<DateTime<Utc>>,
+    /// Started with "now" while its clock window was closed: runs without the window.
+    ignore_window: bool,
     stats: sqlx::types::Json<RunStats>,
     target_snapshot: sqlx::types::Json<Vec<Target>>,
     config_snapshot: sqlx::types::Json<ScanConfig>,
@@ -280,7 +278,7 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
     .await?;
 
     let run: RunRow = sqlx::query_as(
-        "SELECT checkpoint, window_started_at, stats, target_snapshot, config_snapshot FROM scan_runs WHERE id = $1",
+        "SELECT checkpoint, window_started_at, ignore_window, stats, target_snapshot, config_snapshot FROM scan_runs WHERE id = $1",
     )
     .bind(run_id)
     .fetch_one(db)
@@ -288,6 +286,7 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
     let scan = run.config_snapshot.0;
 
     let targets = run.target_snapshot.0;
+    anyhow::ensure!(targets.iter().all(|t| state.config.permits_target(&t.value)), "run outside administrator-approved network");
     let total = input::total_hosts(&targets);
     let max_size = scan.batch_size.max(1) as usize;
     let mut stats = run.stats.0;
@@ -300,7 +299,11 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
     let mut retrying: Option<u128> = None;
 
     let window_start = run.window_started_at.unwrap_or_else(Utc::now);
-    let deadline = window_deadline(db, &scan, window_start).await?;
+    let deadline = if run.ignore_window && scan.test_window_seconds.is_none() {
+        None
+    } else {
+        window_deadline(db, &scan, window_start).await?
+    };
     tracing::info!(%run_id, total, from = %offset, size, "run started");
 
     let mut outcome = Outcome::Done;
@@ -499,9 +502,21 @@ pub(crate) async fn run_batch(
     inputs: &[String],
     budget: Duration,
 ) -> Result<BatchStats> {
+    for target in inputs {
+        let approved = state.config.permits_target(target);
+        anyhow::ensure!(approved, "target outside administrator-approved network");
+    }
     let tools = state.config.tools_dir.as_str();
-    let rate = scan.rate_limit_pps.to_string();
-    let threads = state.config.max_concurrency.clamp(1, 100).to_string();
+    let allowed = &state.config.allowed_ports;
+    anyhow::ensure!(state.config.permits_ports(&scan.ports), "use explicit approved ports");
+    let preflight_ports = format!("-PS{}", scan.ports);
+    let slots = state.config.max_runs.max(1);
+    let share = state.config.global_rate as usize / slots;
+    anyhow::ensure!(share > 0, "worker slots exceed global rate budget");
+    let rate = (scan.rate_limit_pps.max(1) as usize).min(share).to_string();
+    let thread_share = state.config.max_concurrency / slots;
+    anyhow::ensure!(thread_share > 0, "worker slots exceed connection budget");
+    let threads = thread_share.min(100).to_string();
     let deadline = tokio::time::Instant::now() + budget;
     let left = || deadline.saturating_duration_since(tokio::time::Instant::now());
     let mut stats = BatchStats::default();
@@ -526,7 +541,7 @@ pub(crate) async fn run_batch(
             // connects to dead addresses pile up and a /22 took ~160 s at 100% CPU — 6 s
             // without (same hosts found). A lost probe only loses a host with no open port in
             // the list: step 2 still scans every input, with a retry.
-            &["-sn", "-n", "-T4", "--max-retries", "0", PREFLIGHT_PORTS, "--max-rate", &rate, "-oX", "-", "-iL", list.arg()],
+            &["-sn", "-n", "-T4", "--max-retries", "0", &preflight_ports, "--max-rate", &rate, "-oX", "-", "-iL", list.arg()],
             left(),
         )
         .await
@@ -547,16 +562,13 @@ pub(crate) async fn run_batch(
         preset @ ("100" | "1000" | "full") => naabu_args.extend(["-top-ports", preset]),
         list => naabu_args.extend(["-p", list]),
     }
-    // Raw outputs are kept (encrypted) for DefectDojo, whose parsers take these native
-    // formats: "Naabu Scan", "Nmap Scan", "httpx Scan" (PROJECT.md §11.2).
-    let mut artifacts: Vec<(&str, String)> = Vec::new();
     let naabu_out = match syn {
         Some(bin) => engine::run_bin(bin, "naabu", &naabu_args, left()).await,
         None => engine::run(tools, Tool::Naabu, &naabu_args, left()).await,
     }
     .context("naabu")?;
     let open = parse::naabu(&naabu_out);
-    artifacts.push(("naabu", naabu_out));
+    anyhow::ensure!(open.iter().all(|(ip,h)| inputs.contains(ip) && state.config.permits_target(ip) && h.ports.iter().all(|port| allowed.contains(port))), "tool returned address outside approved batch");
     for (ip, hp) in &open {
         alive.entry(ip.clone()).or_insert_with(|| hp.hostname.clone());
     }
@@ -568,9 +580,8 @@ pub(crate) async fn run_batch(
     //    --version-light: the common probes only (no RTSP/SIP/... on every unknown port).
     let mut services: BTreeMap<(String, u16), parse::NmapService> = BTreeMap::new();
     let mut sv_failed = false;
-    let mut nmap_xml = Vec::new();
-    for (ports, hosts) in port_groups(&open) {
-        let list = ListFile::new(run_id, index, &format!("sv{}", nmap_xml.len()), hosts).await?;
+    for (group, (ports, hosts)) in port_groups(&open).into_iter().enumerate() {
+        let list = ListFile::new(run_id, index, &format!("sv{group}"), hosts).await?;
         match engine::run(
             tools,
             Tool::Nmap,
@@ -586,7 +597,6 @@ pub(crate) async fn run_batch(
                 for s in parse::nmap_services(&xml)? {
                     services.insert((s.ip.clone(), s.port), s);
                 }
-                nmap_xml.push(xml);
             }
             // Out of time: abort the batch so it is redone whole, not stored half-scanned.
             Err(e) if left().is_zero() => return Err(e.context("window closed during nmap -sV")),
@@ -597,17 +607,13 @@ pub(crate) async fn run_batch(
             }
         }
     }
-    if !nmap_xml.is_empty() {
-        artifacts.push(("nmap", nmap_xml.join("\n")));
-    }
-
     // 4) HTTP/HTTPS fingerprint only where a web server can be: ports nmap identified as
     //    HTTP/TLS or could not identify. No HTTP requests to SSH, AMQP, databases... (they
     //    log them as protocol errors). If version detection failed, every open port.
     let mut http = Vec::new();
     if !open.is_empty() {
         let endpoints: Vec<String> = open.iter().flat_map(|(ip, hp)| {
-            let name = hp.hostname.clone().or_else(|| alive.get(ip).cloned().flatten()).unwrap_or_else(|| ip.clone());
+            let name = ip; // Never reconnect using a name learned from a remote service.
             let services = &services;
             hp.ports
                 .iter()
@@ -624,7 +630,7 @@ pub(crate) async fn run_batch(
             tools,
             Tool::Httpx,
             &[
-                "-l", list.arg(), "-json", "-silent", "-nc", "-sc", "-title", "-server", "-td", "-favicon", "-duc",
+                "-l", list.arg(), "-json", "-silent", "-nc", "-sc", "-title", "-server", "-td", "-duc",
                 "-random-agent=false", "-H", &ua_header,
                 // No -fr: redirects are recorded (-location), never followed, so a 30x cannot
                 // lead the scanner outside the approved targets (F-03).
@@ -637,7 +643,7 @@ pub(crate) async fn run_batch(
         {
             Ok(out) => {
                 http = parse::httpx(&out);
-                artifacts.push(("httpx", out));
+                // Never persist raw HTTP output containing credentials.
             }
             Err(e) if left().is_zero() => return Err(e.context("window closed during httpx")),
             Err(e) => tracing::warn!(%run_id, index, "httpx failed: {e:#}"),
@@ -647,19 +653,6 @@ pub(crate) async fn run_batch(
     // 5) Persist in one transaction; sensitive fields encrypted with pgp_sym_encrypt.
     let key = state.config.data_key.as_str();
     let mut tx = state.db.begin().await?;
-    for (tool, content) in &artifacts {
-        sqlx::query(
-            "INSERT INTO run_artifacts (run_id, batch, tool, content_enc) VALUES ($1, $2, $3, pgp_sym_encrypt($4, $5))
-             ON CONFLICT (run_id, batch, tool) DO UPDATE SET content_enc = EXCLUDED.content_enc, created_at = now()",
-        )
-        .bind(run_id)
-        .bind(index as i32)
-        .bind(tool)
-        .bind(content)
-        .bind(key)
-        .execute(&mut *tx)
-        .await?;
-    }
     let mut service_ids: BTreeMap<(String, u16), Uuid> = BTreeMap::new();
     for (ip, hostname) in &alive {
         let host_id: Uuid = sqlx::query_scalar(
@@ -703,7 +696,7 @@ pub(crate) async fn run_batch(
         }
     }
 
-    for (rec, raw) in &http {
+    for (rec, _) in &http {
         let Some(port) = rec.port_num() else { continue };
         let Some(&service_id) = service_ids.get(&(rec.ip().to_string(), port)) else { continue };
         let is_admin = fingerprint::is_admin(&rec.url, rec.title.as_deref());
@@ -733,10 +726,10 @@ pub(crate) async fn run_batch(
         .bind(&rec.favicon)
         .bind(is_admin)
         .bind(is_staging)
-        .bind(serde_json::to_string(&rec.header)?)
+        .bind(serde_json::to_string(&rec.header.iter().filter(|(k, _)| matches!(k.as_str(), "server" | "content_type")).collect::<std::collections::BTreeMap<_, _>>())?)
         .bind((!cookies.is_empty()).then(|| serde_json::to_string(&cookies)).transpose()?)
         .bind(rec.tls.as_ref().map(|t| t.to_string()))
-        .bind(raw)
+        .bind(None::<String>)
         .bind(key)
         .execute(&mut *tx)
         .await?;

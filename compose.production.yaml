@@ -1,0 +1,68 @@
+name: asi-production
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: [/tmp]
+  restart: unless-stopped
+services:
+  db:
+    image: postgres@${ASI_POSTGRES_DIGEST:?set sha256 digest}
+    environment:
+      POSTGRES_USER: asi
+      POSTGRES_DB: asi
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    networks: [database]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U asi -d asi]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  core:
+    <<: *hardening
+    image: ${ASI_CORE_REPO:?set core repository}@${ASI_CORE_DIGEST:?set sha256 digest}
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      ASI_DATA_KEY_FILE: /run/secrets/data_key
+      ASI_ADMIN_PASSWORD_FILE: /run/secrets/admin_password
+      ASI_COOKIE_SECURE: "true"
+      ASI_ALLOWED_ORIGINS: https://${ASI_PUBLIC_HOST:?set public hostname}
+      ASI_MAX_RUNS: "0"
+    depends_on:
+      db: {condition: service_healthy}
+    secrets: [database_url, data_key, admin_password]
+    networks: [backend, database]
+  web:
+    <<: *hardening
+    image: ${ASI_WEB_REPO:?set web repository}@${ASI_WEB_DIGEST:?set sha256 digest}
+    environment:
+      ASI_API_MODE: proxy
+      ASI_API_URL: http://core:8000
+    networks: [backend, frontend]
+  https:
+    <<: *hardening
+    image: caddy@${ASI_CADDY_DIGEST:?set sha256 digest}
+    user: "1000:1000"
+    ports: ["443:8443"]
+    environment:
+      ASI_PUBLIC_HOST: ${ASI_PUBLIC_HOST:?set public hostname}
+    tmpfs: [/tmp, /config, /data]
+    secrets: [tls_cert, tls_key]
+    volumes: [./deploy/Caddyfile:/etc/caddy/Caddyfile:ro]
+    networks: [frontend, edge]
+networks:
+  database: {internal: true}
+  backend: {internal: true}
+  frontend: {internal: true}
+  edge: {}
+volumes:
+  pgdata: {}
+secrets:
+  db_password: {file: "${ASI_DB_PASSWORD_PATH:?missing db password file}"}
+  database_url: {file: "${ASI_DATABASE_URL_PATH:?missing database URL file}"}
+  data_key: {file: "${ASI_DATA_KEY_PATH:?missing encryption key file}"}
+  admin_password: {file: "${ASI_ADMIN_PASSWORD_PATH:?missing admin password file}"}
+  tls_cert: {file: "${ASI_TLS_CERT_PATH:?missing certificate file}"}
+  tls_key: {file: "${ASI_TLS_KEY_PATH:?missing TLS key file}"}

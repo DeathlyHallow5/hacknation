@@ -3,9 +3,9 @@
 
 use crate::{
     audit::Note,
-    auth::{self, CurrentUser},
+    auth::{self, CurrentUser, CustomRole},
     engine::Tool,
-    rbac::Role,
+    rbac::{self, Role},
     v1::{err, fail, invalid, missing, permissions, role_meta, text, V1},
     AppState,
 };
@@ -243,6 +243,57 @@ fn role_of(key: &str) -> Option<Role> {
     ROLE_KEYS.iter().find(|(k, _)| *k == key).map(|(_, r)| *r)
 }
 
+/// A role picked for a user: built-in (by key) or custom (by id).
+#[derive(Clone, Copy, PartialEq)]
+enum RoleChoice {
+    Builtin(Role),
+    Custom(Uuid),
+}
+
+impl RoleChoice {
+    /// `users.role`: a custom role keeps `viewer` as its base (migration 0010).
+    fn base(self) -> Role {
+        match self {
+            RoleChoice::Builtin(r) => r,
+            RoleChoice::Custom(_) => Role::Viewer,
+        }
+    }
+    fn custom(self) -> Option<Uuid> {
+        match self {
+            RoleChoice::Builtin(_) => None,
+            RoleChoice::Custom(id) => Some(id),
+        }
+    }
+    fn key(self) -> String {
+        match self {
+            RoleChoice::Builtin(r) => role_meta(r).0.to_string(),
+            RoleChoice::Custom(id) => id.to_string(),
+        }
+    }
+}
+
+async fn resolve_role(db: &sqlx::PgPool, key: &str) -> V1<RoleChoice> {
+    if let Some(r) = role_of(key) {
+        return Ok(RoleChoice::Builtin(r));
+    }
+    let id = Uuid::parse_str(key).map_err(|_| invalid("Nieznana rola."))?;
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM custom_roles WHERE id = $1)")
+        .bind(id)
+        .fetch_one(db)
+        .await
+        .map_err(fail)?;
+    if exists { Ok(RoleChoice::Custom(id)) } else { Err(invalid("Nieznana rola.")) }
+}
+
+/// Only a built-in administrator hands out the administrator role (a custom role with
+/// `users:manage` must not be a way to become admin).
+fn may_grant(me: &CurrentUser, choice: RoleChoice) -> V1<()> {
+    if choice == RoleChoice::Builtin(Role::Admin) && (me.role != Role::Admin || me.custom.is_some()) {
+        return Err(err(StatusCode::FORBIDDEN, "forbidden", "Rolę administratora może nadać tylko administrator."));
+    }
+    Ok(())
+}
+
 #[derive(sqlx::FromRow)]
 struct UserRow {
     id: Uuid,
@@ -253,13 +304,22 @@ struct UserRow {
     disabled: bool,
     last_login_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
+    custom_role_id: Option<Uuid>,
+    custom_role_name: Option<String>,
 }
 
-const USER_SELECT: &str =
-    "SELECT id, username, display_name, email, role, disabled, last_login_at, created_at FROM users";
+const USER_SELECT: &str = "SELECT u.id, u.username, u.display_name, u.email, u.role, u.disabled, u.last_login_at,
+        u.created_at, u.custom_role_id, r.name AS custom_role_name
+    FROM users u LEFT JOIN custom_roles r ON r.id = u.custom_role_id";
 
 fn user_json(u: &UserRow) -> Value {
-    let (key, name, _) = role_meta(u.role);
+    let (key, name) = match (u.custom_role_id, &u.custom_role_name) {
+        (Some(id), Some(name)) => (id.to_string(), name.clone()),
+        _ => {
+            let (k, n, _) = role_meta(u.role);
+            (k.to_string(), n.to_string())
+        }
+    };
     json!({
         "id": u.id, "login": u.username, "name": u.display_name.clone().unwrap_or_else(|| u.username.clone()),
         "email": u.email.clone().unwrap_or_default(), "role_id": key, "role_name": name, "active": !u.disabled,
@@ -268,7 +328,7 @@ fn user_json(u: &UserRow) -> Value {
 }
 
 async fn user_by_id(db: &sqlx::PgPool, id: Uuid) -> V1<UserRow> {
-    sqlx::query_as::<_, UserRow>(sqlx::AssertSqlSafe(format!("{USER_SELECT} WHERE id = $1")))
+    sqlx::query_as::<_, UserRow>(sqlx::AssertSqlSafe(format!("{USER_SELECT} WHERE u.id = $1")))
         .bind(id)
         .fetch_optional(db)
         .await
@@ -278,7 +338,7 @@ async fn user_by_id(db: &sqlx::PgPool, id: Uuid) -> V1<UserRow> {
 
 /// `GET /api/v1/users`
 pub async fn list_users(State(s): State<AppState>) -> V1<Json<Vec<Value>>> {
-    let rows = sqlx::query_as::<_, UserRow>(sqlx::AssertSqlSafe(format!("{USER_SELECT} ORDER BY username")))
+    let rows = sqlx::query_as::<_, UserRow>(sqlx::AssertSqlSafe(format!("{USER_SELECT} ORDER BY u.username")))
         .fetch_all(&s.db)
         .await
         .map_err(fail)?;
@@ -307,24 +367,28 @@ pub struct CreateUser {
 /// `POST /api/v1/users`
 pub async fn create_user(
     State(s): State<AppState>,
+    Extension(me): Extension<CurrentUser>,
     Json(b): Json<CreateUser>,
 ) -> V1<(StatusCode, Extension<Note>, Json<Value>)> {
     let login = auth::normalize_username(&b.login).map_err(|_| invalid("Login: 3–64 znaki a-z, 0-9, „.”, „_”, „-”."))?;
-    let role = role_of(&b.role_id).ok_or_else(|| invalid("Wybierz rolę."))?;
+    let choice = resolve_role(&s.db, &b.role_id).await.map_err(|_| invalid("Wybierz rolę."))?;
+    may_grant(&me, choice)?;
+    let role = choice.base();
     auth::check_password_policy(&b.password).map_err(|_| invalid("Hasło musi mieć od 12 do 256 znaków."))?;
     let name = text(b.name.as_deref(), "name", 120, false)?;
     let email = clean_email(b.email.as_deref())?;
     let hash = auth::hash_blocking(b.password).await?;
     let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO users (username, password_hash, role, can_execute_scans, display_name, email)
-         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (username) DO NOTHING RETURNING id",
+        "INSERT INTO users (username, password_hash, role, can_execute_scans, display_name, email, custom_role_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (username) DO NOTHING RETURNING id",
     )
     .bind(&login)
     .bind(hash)
     .bind(role)
-    .bind(role.default_execute_flag())
+    .bind(choice.custom().is_none() && role.default_execute_flag())
     .bind(&name)
     .bind(&email)
+    .bind(choice.custom())
     .fetch_optional(&s.db)
     .await
     .map_err(fail)?
@@ -350,18 +414,28 @@ pub async fn update_user(
     Json(b): Json<PatchUser>,
 ) -> V1<(Extension<Note>, Json<Value>)> {
     let mut tx = s.db.begin().await.map_err(fail)?;
-    let (role, disabled): (Role, bool) = sqlx::query_as("SELECT role, disabled FROM users WHERE id = $1 FOR UPDATE")
-        .bind(id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(fail)?
-        .ok_or_else(missing)?;
-    let new_role = match b.role_id.as_deref() {
-        Some(k) => role_of(k).ok_or_else(|| invalid("Nieznana rola."))?,
-        None => role,
+    let (role, disabled, custom): (Role, bool, Option<Uuid>) =
+        sqlx::query_as("SELECT role, disabled, custom_role_id FROM users WHERE id = $1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(fail)?
+            .ok_or_else(missing)?;
+    let current = match custom {
+        Some(c) => RoleChoice::Custom(c),
+        None => RoleChoice::Builtin(role),
     };
+    let choice = match b.role_id.as_deref() {
+        Some(k) => resolve_role(&s.db, k).await?,
+        None => current,
+    };
+    if choice != current {
+        may_grant(&me, choice)?;
+    }
+    let new_role = choice.base();
+    let role_changed = choice != current;
     let new_disabled = b.active.map_or(disabled, |a| !a);
-    if id == me.id && (new_role != role || new_disabled) {
+    if id == me.id && (role_changed || new_disabled) {
         return Err(invalid("Nie możesz zmienić własnej roli ani dezaktywować własnego konta."));
     }
     if role == Role::Admin && !disabled && (new_role != Role::Admin || new_disabled) {
@@ -379,7 +453,7 @@ pub async fn update_user(
         "UPDATE users SET role = $2, can_execute_scans = CASE WHEN $2 = 'viewer' THEN false
                  WHEN $2 <> role THEN $5 ELSE can_execute_scans END,
              disabled = $3, display_name = CASE WHEN $4 THEN $6 ELSE display_name END,
-             email = CASE WHEN $7 THEN $8 ELSE email END, updated_at = now()
+             email = CASE WHEN $7 THEN $8 ELSE email END, custom_role_id = $9, updated_at = now()
          WHERE id = $1",
     )
     .bind(id)
@@ -390,15 +464,16 @@ pub async fn update_user(
     .bind(name.flatten())
     .bind(email.is_some())
     .bind(email.flatten())
+    .bind(choice.custom())
     .execute(&mut *tx)
     .await
     .map_err(fail)?;
-    if new_role != role || new_disabled != disabled {
+    if role_changed || new_disabled != disabled {
         auth::revoke_sessions(&mut tx, id).await.map_err(fail)?;
     }
     tx.commit().await.map_err(fail)?;
     let u = user_by_id(&s.db, id).await?;
-    let note = Note::new("user.update", "user", id, json!({ "username": u.username, "role": role_meta(new_role).0, "active": !new_disabled }));
+    let note = Note::new("user.update", "user", id, json!({ "username": u.username, "role": choice.key(), "active": !new_disabled }));
     Ok((Extension(note), Json(user_json(&u))))
 }
 
@@ -428,14 +503,14 @@ pub async fn remove_user(
     Ok((StatusCode::NO_CONTENT, Extension(Note::new("user.disable", "user", id, json!({ "username": username })))))
 }
 
-/// `GET /api/v1/roles` — the four roles of the task with their effective permissions.
+/// `GET /api/v1/roles` — the four built-in roles of the task, then the custom ones.
 pub async fn list_roles(State(s): State<AppState>) -> V1<Json<Vec<Value>>> {
-    let counts: Vec<(Role, i64)> = sqlx::query_as("SELECT role, count(*) FROM users WHERE NOT disabled GROUP BY role")
+    let counts: Vec<(Role, i64)> =
+        sqlx::query_as("SELECT role, count(*) FROM users WHERE NOT disabled AND custom_role_id IS NULL GROUP BY role")
         .fetch_all(&s.db)
         .await
         .map_err(fail)?;
-    Ok(Json(
-        ROLE_KEYS
+    let mut out: Vec<Value> = ROLE_KEYS
             .iter()
             .map(|(_, role)| {
                 let (key, name, description) = role_meta(*role);
@@ -445,6 +520,7 @@ pub async fn list_roles(State(s): State<AppState>) -> V1<Json<Vec<Value>>> {
                     role: *role,
                     can_execute_scans: role.default_execute_flag(),
                     session_id: Uuid::nil(),
+                    custom: None,
                 };
                 json!({
                     "id": key, "key": key, "name": name, "description": description, "builtin": true,
@@ -452,17 +528,148 @@ pub async fn list_roles(State(s): State<AppState>) -> V1<Json<Vec<Value>>> {
                     "users_count": counts.iter().find(|(r, _)| r == role).map_or(0, |c| c.1),
                 })
             })
-            .collect(),
-    ))
+            .collect();
+    for (role, users) in custom_roles(&s.db).await? {
+        out.push(custom_role_json(&role, users));
+    }
+    Ok(Json(out))
 }
 
-/// Role create/update/delete: the matrix is fixed by the task (4 roles).
-pub async fn roles_fixed() -> crate::api::ApiError {
-    err(
-        StatusCode::CONFLICT,
-        "builtin_roles",
-        "Role są wbudowane (cztery role z wymagań AGH) — ich uprawnienia są stałe. Przypisz użytkownikowi inną rolę.",
+
+pub(crate) fn custom_role_json(r: &CustomRole, users: i64) -> Value {
+    json!({
+        "id": r.id, "key": format!("custom-{}", &r.id.simple().to_string()[..8]), "name": r.name,
+        "description": r.description, "builtin": false, "permissions": r.permissions, "users_count": users,
+    })
+}
+
+async fn custom_roles(db: &sqlx::PgPool) -> V1<Vec<(CustomRole, i64)>> {
+    let rows: Vec<(Uuid, String, String, Vec<String>, i64)> = sqlx::query_as(
+        "SELECT r.id, r.name, r.description, r.permissions,
+                (SELECT count(*) FROM users u WHERE u.custom_role_id = r.id AND NOT u.disabled)
+         FROM custom_roles r ORDER BY r.created_at",
     )
+    .fetch_all(db)
+    .await
+    .map_err(fail)?;
+    Ok(rows.into_iter().map(|(id, name, description, permissions, n)| (CustomRole { id, name, description, permissions }, n)).collect())
+}
+
+/// `GET /api/v1/permissions` — the permissions a custom role can be built from.
+pub async fn list_permissions() -> Json<&'static [&'static str]> {
+    Json(&rbac::PERMISSIONS)
+}
+
+fn clean_permissions(p: &[String]) -> V1<Vec<String>> {
+    if let Some(bad) = p.iter().find(|x| !rbac::PERMISSIONS.contains(&x.as_str())) {
+        return Err(invalid(format!("Nieznane uprawnienie: {bad}.")));
+    }
+    // Contract order, no duplicates.
+    let out: Vec<String> = rbac::PERMISSIONS.iter().filter(|k| p.iter().any(|x| x == *k)).map(|k| k.to_string()).collect();
+    if out.is_empty() {
+        return Err(invalid("Wybierz co najmniej jedno uprawnienie."));
+    }
+    Ok(out)
+}
+
+fn builtin_role(id: &str) -> V1<Uuid> {
+    if role_of(id).is_some() {
+        return Err(err(StatusCode::CONFLICT, "conflict", "Ról wbudowanych nie można zmieniać ani usuwać — utwórz rolę własną."));
+    }
+    Uuid::parse_str(id).map_err(|_| missing())
+}
+
+fn name_taken(e: sqlx::Error) -> crate::api::ApiError {
+    match &e {
+        sqlx::Error::Database(d) if d.is_unique_violation() => err(StatusCode::CONFLICT, "conflict", "Rola o tej nazwie już istnieje."),
+        _ => fail(e),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct RoleBody {
+    name: Option<String>,
+    description: Option<String>,
+    permissions: Option<Vec<String>>,
+}
+
+/// `POST /api/v1/roles` — a custom role.
+pub async fn create_role(State(s): State<AppState>, Json(b): Json<RoleBody>) -> V1<(StatusCode, Extension<Note>, Json<Value>)> {
+    let name = text(b.name.as_deref(), "name", 64, true)?.ok_or_else(|| invalid("Podaj nazwę roli."))?;
+    let description = text(b.description.as_deref(), "description", 500, false)?.unwrap_or_default();
+    let permissions = clean_permissions(b.permissions.as_deref().unwrap_or_default())?;
+    let id: Uuid = sqlx::query_scalar("INSERT INTO custom_roles (name, description, permissions) VALUES ($1, $2, $3) RETURNING id")
+        .bind(&name)
+        .bind(&description)
+        .bind(&permissions)
+        .fetch_one(&s.db)
+        .await
+        .map_err(name_taken)?;
+    let role = CustomRole { id, name, description, permissions };
+    let note = Note::new("role.create", "role", id, json!({ "name": role.name, "permissions": role.permissions.len() }));
+    Ok((StatusCode::CREATED, Extension(note), Json(custom_role_json(&role, 0))))
+}
+
+/// `PATCH /api/v1/roles/{id}` — custom roles only. Takes effect on the users' next request.
+pub async fn update_role(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<RoleBody>,
+) -> V1<(Extension<Note>, Json<Value>)> {
+    let id = builtin_role(&id)?;
+    let name = match &b.name {
+        Some(n) => Some(text(Some(n), "name", 64, true)?.ok_or_else(|| invalid("Podaj nazwę roli."))?),
+        None => None,
+    };
+    let description = match &b.description {
+        Some(d) => Some(text(Some(d), "description", 500, false)?.unwrap_or_default()),
+        None => None,
+    };
+    let permissions = match &b.permissions {
+        Some(p) => Some(clean_permissions(p)?),
+        None => None,
+    };
+    let row: Option<(String, String, Vec<String>)> = sqlx::query_as(
+        "UPDATE custom_roles SET name = coalesce($2, name), description = coalesce($3, description),
+             permissions = coalesce($4, permissions), updated_at = now()
+         WHERE id = $1 RETURNING name, description, permissions",
+    )
+    .bind(id)
+    .bind(&name)
+    .bind(&description)
+    .bind(&permissions)
+    .fetch_optional(&s.db)
+    .await
+    .map_err(name_taken)?;
+    let (name, description, permissions) = row.ok_or_else(missing)?;
+    let users: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE custom_role_id = $1 AND NOT disabled")
+        .bind(id)
+        .fetch_one(&s.db)
+        .await
+        .map_err(fail)?;
+    let role = CustomRole { id, name, description, permissions };
+    let note = Note::new("role.update", "role", id, json!({ "name": role.name, "permissions": role.permissions.len() }));
+    Ok((Extension(note), Json(custom_role_json(&role, users))))
+}
+
+/// `DELETE /api/v1/roles/{id}` — custom roles nobody has (deactivated accounts included).
+pub async fn delete_role(State(s): State<AppState>, Path(id): Path<String>) -> V1<(StatusCode, Extension<Note>)> {
+    let id = builtin_role(&id)?;
+    let users: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE custom_role_id = $1")
+        .bind(id)
+        .fetch_one(&s.db)
+        .await
+        .map_err(fail)?;
+    if users > 0 {
+        return Err(err(StatusCode::CONFLICT, "conflict", "Rola jest przypisana do użytkowników. Zmień im rolę przed usunięciem."));
+    }
+    let name: String = sqlx::query_scalar("DELETE FROM custom_roles WHERE id = $1 RETURNING name")
+        .bind(id)
+        .fetch_optional(&s.db)
+        .await
+        .map_err(fail)?
+        .ok_or_else(missing)?;
+    Ok((StatusCode::NO_CONTENT, Extension(Note::new("role.delete", "role", id, json!({ "name": name })))))
 }
 
 // ---------- DefectDojo ----------

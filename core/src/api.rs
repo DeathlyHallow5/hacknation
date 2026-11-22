@@ -67,6 +67,7 @@ fn v1_routes() -> Router<AppState> {
         .route("/api/v1/dashboard/technologies", get(v1::technologies))
         .route("/api/v1/dashboard/address-map", get(v1::address_map))
         .route("/api/v1/search", get(v1::search))
+        .route("/api/v1/tags", get(v1::tags))
         .route("/api/v1/targets", get(v1::list_targets).post(v1::create_targets))
         .route("/api/v1/targets/export", get(v1::export_targets))
         .route(
@@ -83,8 +84,9 @@ fn v1_routes() -> Router<AppState> {
         .route("/api/v1/findings/bulk", post(crate::v1_assets::findings_bulk))
         .route("/api/v1/users", get(crate::v1_admin::list_users).post(crate::v1_admin::create_user))
         .route("/api/v1/users/{id}", patch(crate::v1_admin::update_user).delete(crate::v1_admin::remove_user))
-        .route("/api/v1/roles", get(crate::v1_admin::list_roles).post(crate::v1_admin::roles_fixed))
-        .route("/api/v1/roles/{id}", patch(crate::v1_admin::roles_fixed).delete(crate::v1_admin::roles_fixed))
+        .route("/api/v1/roles", get(crate::v1_admin::list_roles).post(crate::v1_admin::create_role))
+        .route("/api/v1/permissions", get(crate::v1_admin::list_permissions))
+        .route("/api/v1/roles/{id}", patch(crate::v1_admin::update_role).delete(crate::v1_admin::delete_role))
         .route("/api/v1/settings", get(crate::v1_admin::get_settings).patch(crate::v1_admin::update_settings))
         .route("/api/v1/security/encryption", get(crate::v1_admin::encryption))
         .route("/api/v1/security/encryption/rotate", post(crate::v1_admin::rotate_key))
@@ -471,7 +473,9 @@ async fn create_scan(
         b.batch_size,
         b.inactive_after_misses,
     )?;
+    if !s.config.permits_ports(&b.ports) { return Err(bad("use explicit approved ports")); }
     let (targets, errors) = input::parse_list(&b.targets);
+    if targets.iter().any(|t| !s.config.permits_target(&t.value)) { return Err(forbidden()); }
     if targets.is_empty() && b.target_ids.is_empty() {
         return Err(bad("no valid targets"));
     }
