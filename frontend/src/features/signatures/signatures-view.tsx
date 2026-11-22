@@ -153,7 +153,7 @@ export function SignaturesView() {
     <Container className="pb-12">
       <PageHeader
         title="Sygnatury"
-        description="Sygnatury tylko rozpoznają usługi: nie logują się, nie wysyłają formularzy ani ładunków ataku."
+        description="Reguły, po których panel rozpoznaje usługi i panele administracyjne (nagłówki, tytuł strony, baner). Sygnatury tylko rozpoznają: nie logują się, nie wysyłają formularzy ani ładunków ataku."
         actions={
           <>
             <DropdownMenu>

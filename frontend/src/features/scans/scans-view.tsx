@@ -223,6 +223,7 @@ export function ScansView() {
     <Container className="pb-12">
       <PageHeader
         title="Skanowania"
+        description="Tu uruchamiasz skanowanie i śledzisz jego postęp. Harmonogramy uruchamiają je same w oknie czasowym, a profile określają porty i tempo."
         actions={
           <Guard permission="scans:create">
             <Button variant="primary" asChild>

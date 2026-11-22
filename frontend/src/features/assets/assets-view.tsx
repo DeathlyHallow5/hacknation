@@ -303,7 +303,10 @@ export function AssetsView() {
   const [group, setGroup] = React.useState(params.get("group") ?? "");
   return (
     <Container className="pb-12">
-      <PageHeader title="Zasoby" />
+      <PageHeader
+        title="Zasoby"
+        description="Wszystko, co skaner znalazł w zakresach: hosty, otwarte porty, usługi z wersjami i technologie stron WWW. Kliknij host, aby zobaczyć szczegóły i historię."
+      />
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="hosts">Hosty</TabsTrigger>

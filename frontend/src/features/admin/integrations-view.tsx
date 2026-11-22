@@ -187,7 +187,7 @@ export function IntegrationsView() {
   const engines = useQuery({ queryKey: ["engines"], queryFn: api.integrations.engines });
   return (
     <Container className="pb-12">
-      <PageHeader title="Integracje" />
+      <PageHeader title="Integracje" description="Połączenie z DefectDojo (wysyłka znalezisk) i wersje narzędzi, których używa skaner." />
       <div className="grid gap-6">
         <DefectDojoPanel />
         <Panel title="Silniki skanujące" description="Wersje narzędzi, których używa skaner." flush>
