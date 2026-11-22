@@ -408,6 +408,10 @@ pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
             .await?
             .rows_affected();
             tracing::info!(%run_id, status, "run finished");
+            if n > 0 {
+                // DefectDojo "automatic export" (dashboard setting); never blocks or fails the run.
+                tokio::spawn(crate::v1_admin::auto_export(state.clone(), run_id));
+            }
             n > 0
         }
         Outcome::Paused if scan.on_window_exceeded.as_deref() == Some("stop") => {
