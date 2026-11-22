@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CircleStop, Download, GitCompareArrows, Pause, Pencil, Play } from "lucide-react";
+import { Check, CircleStop, Download, GitCompareArrows, Pause, Pencil, Play, RotateCw } from "lucide-react";
 import Link from "next/link";
 import * as React from "react";
 import { toast } from "sonner";
@@ -13,6 +13,7 @@ import { Field, Input, Textarea } from "@/components/ui/form-controls";
 import { Panel, Progress, Skeleton } from "@/components/ui/misc";
 import { ConfirmDialog, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/overlays";
 import { BatchGrid } from "@/components/viz/bits";
+import { canRescan, useRescan } from "@/features/scans/rescan";
 import { errorMessage } from "@/lib/api/client";
 import { api } from "@/lib/api/endpoints";
 import type { ScanBatch, ScanEvent, ScanLogLine, ScanRun } from "@/lib/api/types";
@@ -203,6 +204,7 @@ export function ScanDetailView({ id }: { id: string }) {
   const logsQ = useQuery({ queryKey: ["scan-logs", id], queryFn: () => api.scans.logs(id), enabled: Boolean(base.data) });
   const [editOpen, setEditOpen] = React.useState(false);
   const [confirmCancel, setConfirmCancel] = React.useState(false);
+  const { rescan, pending: rescanning } = useRescan();
 
   const batches = React.useMemo(() => {
     const list = (batchesQ.data ?? []).slice();
@@ -290,6 +292,13 @@ export function ScanDetailView({ id }: { id: string }) {
                       <GitCompareArrows /> Zmiany względem poprzedniego
                     </Link>
                   </Button>
+                ) : null}
+                {canRescan(scan) ? (
+                  <Guard permission="scans:create">
+                    <Button onClick={() => void rescan(scan)} disabled={Boolean(rescanning)}>
+                      <RotateCw /> Skanuj ponownie
+                    </Button>
+                  </Guard>
                 ) : null}
                 <Guard permission="scans:export">
                   <DropdownMenu>
