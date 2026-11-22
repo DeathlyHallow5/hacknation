@@ -16,12 +16,13 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0b1830",
+  themeColor: "#000000",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
+  // "contrast" = DEFAULT_THEME in lib/prefs.tsx; PREFS_SCRIPT swaps in a theme the user picked.
   return (
-    <html lang="pl" data-theme="light" suppressHydrationWarning className={`${sans.variable} ${mono.variable} antialiased`}>
+    <html lang="pl" data-theme="contrast" suppressHydrationWarning className={`${sans.variable} ${mono.variable} antialiased`}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: PREFS_SCRIPT }} />
       </head>

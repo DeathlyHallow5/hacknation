@@ -47,7 +47,7 @@ export function TechBars({ items, onSelect }: { items: TechStat[]; onSelect?: (t
 
 const BATCH_STYLE: Record<ScanBatch["status"], { fill: string; label: string }> = {
   done: { fill: "var(--data)", label: "Zakończona" },
-  running: { fill: "var(--accent)", label: "W toku" },
+  running: { fill: "var(--signal)", label: "W toku" },
   paused: { fill: "var(--unstable)", label: "Wstrzymana (punkt kontrolny)" },
   failed: { fill: "var(--gone)", label: "Przerwana" },
   pending: { fill: "transparent", label: "Oczekuje" },

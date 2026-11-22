@@ -80,14 +80,14 @@ export function HilbertMap({ cidr, size = 360, className }: { cidr: string; size
     ctx.imageSmoothingEnabled = false;
 
     const colors: Record<number, [number, number, number]> = {
-      [AddressStatus.None]: hexToRgb(cssVar("--map-none", "#142846")),
-      [AddressStatus.Active]: hexToRgb(cssVar("--map-active", "#3b7cc9")),
-      [AddressStatus.New]: hexToRgb(cssVar("--map-active", "#3b7cc9")),
-      [AddressStatus.Changed]: hexToRgb(cssVar("--map-active", "#3b7cc9")),
-      [AddressStatus.Gone]: hexToRgb(cssVar("--map-inactive", "#34425b")),
+      [AddressStatus.None]: hexToRgb(cssVar("--map-none", "#262626")),
+      [AddressStatus.Active]: hexToRgb(cssVar("--map-active", "#2dd4bf")),
+      [AddressStatus.New]: hexToRgb(cssVar("--map-active", "#2dd4bf")),
+      [AddressStatus.Changed]: hexToRgb(cssVar("--map-active", "#2dd4bf")),
+      [AddressStatus.Gone]: hexToRgb(cssVar("--map-inactive", "#474747")),
       [AddressStatus.Unstable]: hexToRgb(cssVar("--map-unstable", "#c4860f")),
-      [AddressStatus.Inactive]: hexToRgb(cssVar("--map-inactive", "#34425b")),
-      [AddressStatus.Excluded]: hexToRgb(cssVar("--map-excluded", "#2a3550")),
+      [AddressStatus.Inactive]: hexToRgb(cssVar("--map-inactive", "#474747")),
+      [AddressStatus.Excluded]: hexToRgb(cssVar("--map-excluded", "#303030")),
     };
     const img = new ImageData(n, n);
     const px = img.data;
@@ -120,7 +120,7 @@ export function HilbertMap({ cidr, size = 360, className }: { cidr: string; size
       ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
       // /24 grid for orientation
       const step = (canvas.width / n) * blockSide;
-      ctx.strokeStyle = cssVar("--map-grid", "rgba(11,24,48,0.55)");
+      ctx.strokeStyle = cssVar("--map-grid", "rgba(10,10,10,0.6)");
       ctx.lineWidth = Math.max(1, dpr * 0.75);
       if (n >= 64) {
         ctx.beginPath();
@@ -139,7 +139,7 @@ export function HilbertMap({ cidr, size = 360, className }: { cidr: string; size
         const cy = (coords[d * 2 + 1] + 0.5) * (canvas.height / n);
         const r = 3.4 * dpr;
         ctx.lineCap = "round";
-        const ring = cssVar("--chrome", "#0b1830");
+        const ring = cssVar("--chrome", "#141414");
         if (kind === AddressStatus.New || kind === AddressStatus.Gone) {
           const color = cssVar(kind === AddressStatus.New ? "--map-new" : "--map-gone");
           const pathFn = () => {
@@ -270,7 +270,7 @@ export function HilbertMap({ cidr, size = 360, className }: { cidr: string; size
         {/* Scan position: a plain 2px ring, no glow, no ping (the sweep is the one animated moment). */}
         {head ? (
           <span
-            className="pointer-events-none absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-accent"
+            className="pointer-events-none absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-signal"
             style={{ left: `${((head[0] + 0.5) / n) * 100}%`, top: `${((head[1] + 0.5) / n) * 100}%` }}
             aria-hidden
           />
@@ -301,7 +301,7 @@ export function HilbertMap({ cidr, size = 360, className }: { cidr: string; size
             <li><LegendItem color="var(--map-new)" shape="plus" label="Nowy" value={fmtNumber(c.new)} /></li>
             <li><LegendItem color="var(--map-changed)" shape="diamond" label="Zmieniony" value={fmtNumber(c.changed)} /></li>
             <li><LegendItem color="var(--map-gone)" shape="cross" label="Zniknął" value={fmtNumber(c.gone)} /></li>
-            {head ? <li><LegendItem color="var(--accent)" shape="ring" label="Pozycja skanu" /></li> : null}
+            {head ? <li><LegendItem color="var(--signal)" shape="ring" label="Pozycja skanu" /></li> : null}
           </ul>
         </div>
       ) : null}

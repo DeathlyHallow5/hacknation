@@ -200,7 +200,7 @@ export function TagInput({
   };
   const listId = id ? `${id}-suggestions` : undefined;
   return (
-    <div className="flex min-h-9 flex-wrap items-center gap-1.5 rounded-lg border border-line-strong bg-surface px-2 py-1.5 focus-within:border-accent focus-within:ring-3 focus-within:ring-accent/25">
+    <div className="flex min-h-9 flex-wrap items-center gap-1.5 rounded-lg border border-line-strong bg-field px-2 py-1.5 focus-within:border-accent focus-within:ring-3 focus-within:ring-accent/25">
       {value.map((t) => (
         <span key={t} className={cn("inline-flex items-center gap-1 rounded-md bg-surface-3 py-0.5 pr-1 pl-1.5 text-xs text-ink contrast:border contrast:border-current", mono && "mono")}>
           {t}

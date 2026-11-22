@@ -13,8 +13,13 @@ export interface Prefs {
   motion: MotionPref;
 }
 
-export const PREFS_KEY = "asi:prefs";
-const DEFAULTS: Prefs = { theme: "light", text: "md", motion: "full" };
+/* v2: the default theme became "contrast"; earlier entries saved every field (theme "light" too,
+   even when only the text size was changed), so they are not read. Only fields a user picked are
+   stored, so a later change of a default reaches everyone who never picked that field. */
+export const PREFS_KEY = "asi:prefs:v2";
+/** Keep in sync with data-theme on <html> in app/layout.tsx. */
+export const DEFAULT_THEME: ThemePref = "contrast";
+const DEFAULTS: Prefs = { theme: DEFAULT_THEME, text: "md", motion: "full" };
 
 /** Runs in <head> before first paint, so there is no flash of the wrong theme/size. */
 export const PREFS_SCRIPT = `(function(){try{var p=JSON.parse(localStorage.getItem("${PREFS_KEY}")||"{}");var d=document.documentElement;if(p.theme)d.setAttribute("data-theme",p.theme);if(p.text&&p.text!=="md")d.setAttribute("data-text",p.text);if(p.motion==="reduce")d.setAttribute("data-motion","reduce")}catch(e){}})()`;
@@ -23,23 +28,25 @@ export const PREFS_SCRIPT = `(function(){try{var p=JSON.parse(localStorage.getIt
 let cache: Prefs | null = null;
 const listeners = new Set<() => void>();
 
-function readStorage(): Prefs {
+/** Only the fields the user picked. */
+function readPicked(): Partial<Prefs> {
   try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") };
+    const v = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}");
+    return v && typeof v === "object" ? v : {};
   } catch {
-    return DEFAULTS;
+    return {};
   }
 }
 
 const store = {
   get(): Prefs {
-    if (!cache) cache = readStorage();
+    if (!cache) cache = { ...DEFAULTS, ...readPicked() };
     return cache;
   },
   set(patch: Partial<Prefs>) {
     cache = { ...store.get(), ...patch };
     try {
-      localStorage.setItem(PREFS_KEY, JSON.stringify(cache));
+      localStorage.setItem(PREFS_KEY, JSON.stringify({ ...readPicked(), ...patch }));
     } catch {
       /* storage may be unavailable */
     }

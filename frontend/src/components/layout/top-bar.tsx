@@ -60,7 +60,7 @@ function LiveScanPill() {
       className="hidden h-9 items-center gap-2 rounded-lg border border-chrome-line bg-chrome-raised px-3 text-sm font-semibold text-chrome-ink transition-colors hover:border-accent md:inline-flex"
       title="Przejdź do skanowania w toku"
     >
-      <span className={cn("size-2 rounded-full", running ? "animate-pulse-dot bg-accent" : "bg-unstable")} aria-hidden />
+      <span className={cn("size-2 rounded-full", running ? "animate-pulse-dot bg-signal" : "bg-unstable")} aria-hidden />
       <span>
         Skan #{scan.number}
         <span className="text-chrome-ink-2">{running ? `: ${fmtPercent(scan.progress)}` : scan.status === "paused_window" ? ": czeka na okno" : ": wstrzymany"}</span>
@@ -138,7 +138,7 @@ function UserMenu() {
           type="button"
           className="inline-flex h-9 items-center gap-2 rounded-lg border border-chrome-line bg-chrome-raised py-1 pr-2.5 pl-1 text-left text-chrome-ink transition-colors hover:border-accent"
         >
-          {/* The avatar is identity, not an action: navy line colour, not the action cyan. */}
+          {/* The avatar is identity, not an action: chrome line colour, not the action colour. */}
           <span className="grid size-7 place-items-center rounded-full bg-chrome-line text-xs font-semibold text-chrome-ink contrast:bg-transparent contrast:ring-1 contrast:ring-white">
             {initials(session.user.name)}
           </span>
