@@ -1,8 +1,11 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* Themes are switched with <html data-theme="light|dark|contrast">.
-   Chart palettes were checked with the dataviz validator (CVD + contrast). */
+/* Themes are switched with <html data-theme="light|dark|contrast">; "contrast" is the default
+   (layout.tsx, lib/prefs.tsx) until a user picks another one.
+   Light and dark share one design: an obsidian chrome (top bar + hero), neutral greys without a
+   colour cast, a white/black primary action and one teal signal colour for progress, live
+   indicators, chart lines and active hosts. */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 @custom-variant contrast (&:where([data-theme="contrast"], [data-theme="contrast"] *));
 
@@ -13,38 +16,48 @@
 [data-theme="light"] {
   color-scheme: light;
 
-  /* Chrome: top bar + hero, always "granat" (navy) like the mockup. */
-  --chrome: #0b1830;
-  --chrome-raised: #12233f;
-  --chrome-line: #22385c;
-  --chrome-ink: #e8eef7;
-  --chrome-ink-2: #9fb0c8;
-  --chrome-dot: rgba(159, 176, 200, 0.13);
-  /* Signed deltas on navy (hero KPI): 9.7:1 and 6.9:1 on chrome-raised. */
+  /* Chrome: top bar + hero — the same obsidian as the dark theme, so both read as one product. */
+  --chrome: #141414;
+  --chrome-raised: #1f1f1f;
+  --chrome-line: #333333;
+  --chrome-ink: #ffffff;
+  --chrome-ink-2: #b3b3b3;
+  --chrome-dot: rgba(179, 179, 179, 0.09);
+  /* Signed deltas on the chrome (hero KPI): 10.2:1 and 7.3:1 on chrome-raised. */
   --chrome-up: #5fe39a;
   --chrome-down: #ff8a8f;
-  /* Scan console on navy: 10.9:1 and 7.8:1 on chrome. */
+  /* Scan console on the chrome: 11.3:1 and 8.1:1 on chrome. */
   --log-warn: #f7c35f;
   --log-error: #ff8a8f;
-  --scrim: rgba(5, 12, 24, 0.55);
+  --scrim: rgba(10, 10, 10, 0.55);
+  /* Inside the chrome (see the .bg-chrome rule below) the primary action stays white on black,
+     links and live indicators bright teal — whatever the workspace uses. */
+  --chrome-accent: #f4f4f5;
+  --chrome-accent-hover: #ffffff;
+  --chrome-accent-ink: #0a0a0a;
+  --chrome-link: #2dd4bf;
+  --chrome-signal: #2dd4bf;
 
-  /* Workspace ("papier"). */
-  --canvas: #f2f5f9;
+  /* Workspace: the dark theme's greys mirrored, no colour cast. */
+  --canvas: #f4f4f5;
   --surface: #ffffff;
-  --surface-2: #f7f9fc;
-  --surface-3: #edf1f6;
-  --line: #dce3ec;
-  --line-strong: #c3cedc;
-  --ink: #0e1b2e;
-  --ink-2: #55657c;
-  --ink-3: #8593a7;
+  --surface-2: #fafafa;
+  --surface-3: #ededed;
+  --field: #fafafa;
+  --line: #e4e4e4;
+  --line-strong: #c7c7c7;
+  --ink: #0a0a0a;
+  --ink-2: #525252;
+  --ink-3: #737373;
 
-  /* "Sygnał" cyan: actions, focus, progress only. */
-  --accent: #1eb2ea;
-  --accent-hover: #4cc3f0;
-  --accent-ink: #06223a;
-  --link: #0a6fa0;
-  --focus: #1eb2ea;
+  /* Primary action: black button, white text (the dark theme's white button, mirrored). */
+  --accent: #0a0a0a;
+  --accent-hover: #2b2b2b;
+  --accent-ink: #ffffff;
+  /* Teal signal: progress, live indicators, chart lines, active hosts. Link text 5.5:1 on white. */
+  --signal: #0d9488;
+  --link: #0f766e;
+  --focus: #0d9488;
 
   /* Change-state vocabulary: fill (graphics) / ink (text) / soft (chip bg). */
   --new: #1f9d57;
@@ -62,55 +75,68 @@
   --inactive: #7d8ba0;
   --inactive-ink: #556377;
   --inactive-soft: #ebeff4;
-  /* "Aktywny" host: the map's blue, never the green of "Nowy". UI mark: 4.3:1 on surface. */
-  --active: #3b7cc9;
+  /* "Aktywny" host: the map's teal, never the green of "Nowy". UI mark: 3.7:1 on surface. */
+  --active: #0d9488;
 
   --danger: #b42a35;
   --danger-soft: #fbe8e9;
   --success: #0f7a41;
   --success-soft: #e3f4ea;
 
-  /* Address-space map (always drawn on navy). */
-  --map-none: #142846;
-  --map-active: #3b7cc9;
-  --map-new: #1fa35e;
+  /* Address-space map (always drawn on the chrome). Hex only: the canvas code parses them. */
+  --map-none: #262626;
+  --map-active: #2dd4bf;
+  /* Lime, not the green of the chips: a green "+" disappears on the teal of active hosts. */
+  --map-new: #a3e635;
   --map-changed: #8466ee;
   --map-gone: #e0505a;
   --map-unstable: #c4860f;
-  --map-inactive: #34425b;
-  --map-excluded: #2a3550;
-  --map-grid: rgba(11, 24, 48, 0.55);
+  --map-inactive: #474747;
+  --map-excluded: #303030;
+  --map-grid: rgba(10, 10, 10, 0.6);
 
   /* Sequential ramp (one hue, light -> dark) for magnitudes, e.g. the heatmap. */
-  --seq-0: #eef4fb;
-  --seq-1: #cfe0f5;
-  --seq-2: #9ec2ea;
-  --seq-3: #5f97d6;
-  --seq-4: #2f6cb5;
-  --seq-5: #1b4a85;
-  --data: #3b7cc9;
+  --seq-0: #f0fdfa;
+  --seq-1: #ccfbf1;
+  --seq-2: #99f6e4;
+  --seq-3: #2dd4bf;
+  --seq-4: #0d9488;
+  --seq-5: #115e59;
+  --data: #0d9488;
 
-  --shadow-pop: 0 16px 40px -16px rgba(11, 24, 48, 0.35), 0 2px 6px -2px rgba(11, 24, 48, 0.12);
+  --shadow-pop: 0 16px 40px -16px rgba(0, 0, 0, 0.3), 0 2px 6px -2px rgba(0, 0, 0, 0.1);
 }
 
+/* Dark ("Ciemny"): obsidian. Text 18.4:1 / 8.8:1 on surface #141414 (19.8:1 on the canvas). */
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --chrome: #081325;
-  --chrome-raised: #10203a;
-  --chrome-line: #20365a;
+  --chrome: #141414;
+  --chrome-raised: #1f1f1f;
+  --chrome-line: #333333;
+  --chrome-ink: #ffffff;
+  --chrome-ink-2: #b3b3b3;
+  --chrome-dot: rgba(179, 179, 179, 0.07);
+  --scrim: rgba(0, 0, 0, 0.7);
 
-  --canvas: #0c192d;
-  --surface: #12223a;
-  --surface-2: #162944;
-  --surface-3: #1b3050;
-  --line: #233a5d;
-  --line-strong: #2f4b74;
-  --ink: #e8eef7;
-  --ink-2: #9fb0c8;
-  --ink-3: #6f819c;
+  --canvas: #0a0a0a;
+  --surface: #141414;
+  --surface-2: #1f1f1f;
+  --surface-3: #262626;
+  --field: #1f1f1f;
+  --line: #333333;
+  --line-strong: #474747;
+  --ink: #ffffff;
+  --ink-2: #b3b3b3;
+  --ink-3: #8c8c8c;
 
-  --link: #5ccbf5;
+  /* White button with obsidian text ("+ Nowe skanowanie"). */
+  --accent: #f4f4f5;
+  --accent-hover: #d4d4d8;
+  --accent-ink: #0a0a0a;
+  --signal: #2dd4bf;
+  --link: #2dd4bf;
+  --focus: #2dd4bf;
 
   --new: #1fa35e;
   --new-ink: #5fe39a;
@@ -124,23 +150,23 @@
   --unstable: #c4860f;
   --unstable-ink: #f7c35f;
   --unstable-soft: rgba(245, 184, 61, 0.13);
-  --inactive: #8c9ab0;
-  --inactive-ink: #a9b5c7;
-  --inactive-soft: rgba(140, 154, 176, 0.14);
-  --active: #4a88d2;
+  --inactive: #8c8c8c;
+  --inactive-ink: #b3b3b3;
+  --inactive-soft: rgba(179, 179, 179, 0.12);
+  --active: #2dd4bf;
 
   --danger: #ff8a8f;
   --danger-soft: rgba(255, 107, 107, 0.13);
   --success: #5fe39a;
   --success-soft: rgba(61, 220, 132, 0.12);
 
-  --seq-0: #172b48;
-  --seq-1: #1d3c66;
-  --seq-2: #255389;
-  --seq-3: #306cae;
-  --seq-4: #4a88d2;
-  --seq-5: #7eabe8;
-  --data: #4a88d2;
+  --seq-0: #1f1f1f;
+  --seq-1: #134e4a;
+  --seq-2: #115e59;
+  --seq-3: #0f766e;
+  --seq-4: #14b8a6;
+  --seq-5: #5eead4;
+  --data: #2dd4bf;
 
   --shadow-pop: 0 18px 48px -12px rgba(0, 0, 0, 0.6), 0 2px 8px -2px rgba(0, 0, 0, 0.4);
 }
@@ -160,11 +186,17 @@
   --log-warn: #ffd166;
   --log-error: #ff8080;
   --scrim: rgba(0, 0, 0, 0.85);
+  --chrome-accent: #ffe500;
+  --chrome-accent-hover: #fff27a;
+  --chrome-accent-ink: #000000;
+  --chrome-link: #ffe500;
+  --chrome-signal: #ffe500;
 
   --canvas: #000000;
   --surface: #000000;
   --surface-2: #000000;
   --surface-3: #111111;
+  --field: #000000;
   --line: #ffffff;
   --line-strong: #ffffff;
   --ink: #ffffff;
@@ -174,6 +206,7 @@
   --accent: #ffe500;
   --accent-hover: #fff27a;
   --accent-ink: #000000;
+  --signal: #ffe500;
   --link: #ffe500;
   --focus: #ffe500;
 
@@ -209,11 +242,25 @@
 
   --map-none: #1a1a1a;
   --map-active: #6fa8ff;
+  --map-new: #1fa35e;
   --map-inactive: #8a8a8a;
   --map-excluded: #444444;
   --map-grid: rgba(0, 0, 0, 0.6);
 
   --shadow-pop: 0 0 0 2px #ffffff;
+}
+
+/* The chrome (top bar, hero, login aside, tooltips) is dark in every theme. Inside it the primary
+   action, links and live indicators use the chrome's own tokens, so in the light theme the same
+   primary button is black on paper and white on the chrome. Works because @theme inline below makes
+   utilities read var(--accent) etc. where they are used. */
+.bg-chrome,
+.bg-chrome-raised {
+  --accent: var(--chrome-accent);
+  --accent-hover: var(--chrome-accent-hover);
+  --accent-ink: var(--chrome-accent-ink);
+  --link: var(--chrome-link);
+  --signal: var(--chrome-signal);
 }
 
 @theme inline {
@@ -235,6 +282,7 @@
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
+  --color-field: var(--field);
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
   --color-ink: var(--ink);
@@ -244,6 +292,7 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-ink: var(--accent-ink);
+  --color-signal: var(--signal);
   --color-link: var(--link);
   --color-focus: var(--focus);
 
@@ -363,7 +412,12 @@ body {
   border-radius: 6px;
 }
 .on-chrome .skeleton {
-  background: linear-gradient(90deg, #17294a 0%, #1e3459 50%, #17294a 100%);
+  background: linear-gradient(
+    90deg,
+    var(--chrome-raised) 0%,
+    color-mix(in srgb, var(--chrome-raised) 75%, var(--chrome-ink-2)) 50%,
+    var(--chrome-raised) 100%
+  );
   background-size: 200% 100%;
 }
 

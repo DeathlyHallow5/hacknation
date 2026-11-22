@@ -14,7 +14,7 @@ export function SelectTrigger({ className, children, quiet, ...props }: React.Co
   return (
     <SelectPrimitive.Trigger
       className={cn(
-        "inline-flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-line-strong bg-surface px-3 text-left text-sm text-ink transition-colors hover:border-ink-3 focus-visible:border-accent focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-60 data-[placeholder]:text-ink-3 [&>span]:truncate",
+        "inline-flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-line-strong bg-field px-3 text-left text-sm text-ink transition-colors hover:border-ink-3 focus-visible:border-accent focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-60 data-[placeholder]:text-ink-3 [&>span]:truncate",
         quiet && "-ml-2 border-transparent bg-transparent px-2 hover:border-line-strong focus-visible:border-accent",
         className,
       )}

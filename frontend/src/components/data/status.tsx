@@ -125,7 +125,7 @@ const SCAN_ICON = {
 
 const SCAN_STYLE: Record<ScanStatus, string> = {
   queued: quiet,
-  running: cn(chip, "bg-accent/14 text-link"),
+  running: cn(chip, "bg-signal/14 text-link"),
   paused: cn(chip, "bg-unstable-soft text-unstable-ink"),
   paused_window: cn(chip, "bg-unstable-soft text-unstable-ink"),
   completed: quiet,
