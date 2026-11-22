@@ -43,7 +43,7 @@ export function Sparkline({
               <div className="mb-1 text-chrome-ink-2">
                 Skan #{points[hi].scan_number}, {fmtDayMonth(points[hi].at)}
               </div>
-              <TipRow color="var(--accent)" value={fmtNumber(points[hi].value)} label={unit} />
+              <TipRow color="var(--signal)" value={fmtNumber(points[hi].value)} label={unit} />
             </>
           ),
         };
@@ -65,10 +65,10 @@ export function Sparkline({
         onPointerLeave={() => setHover(null)}
         className="block touch-none"
       >
-        <path d={area} fill="var(--chrome-ink-2)" fillOpacity="0.08" />
-        <path d={d} fill="none" stroke="var(--chrome-ink-2)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        <path d={area} fill="var(--signal)" fillOpacity="0.12" />
+        <path d={d} fill="none" stroke="var(--signal)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
         {hi !== null ? <line x1={x(hi)} x2={x(hi)} y1={0} y2={height} stroke="var(--chrome-ink-2)" strokeOpacity="0.5" strokeWidth="1" /> : null}
-        <circle cx={x(last)} cy={y(values[last])} r="4.5" fill="var(--accent)" stroke="var(--chrome-raised)" strokeWidth="2" />
+        <circle cx={x(last)} cy={y(values[last])} r="4.5" fill="var(--signal)" stroke="var(--chrome-raised)" strokeWidth="2" />
         {hi !== null && hi !== last ? <circle cx={x(hi)} cy={y(values[hi])} r="4" fill="var(--chrome-ink)" stroke="var(--chrome-raised)" strokeWidth="2" /> : null}
       </svg>
       <ChartTooltip tip={tip} containerWidth={width} />

@@ -121,7 +121,7 @@ function StatusLine({ s }: { s: DashboardSummary | undefined }) {
   const watched = s ? ` Pod obserwacją: ${countLabel(s.monitored_addresses, ["adres IP", "adresy IP", "adresów IP"])}.` : "";
   return (
     <div className="flex max-w-4xl items-start gap-2.5 text-base leading-relaxed text-pretty text-chrome-ink-2" aria-live="polite">
-      <span className={cn("mt-[0.6em] size-2 shrink-0 rounded-full", running ? "animate-pulse-dot bg-accent" : "bg-chrome-ink-2")} aria-hidden />
+      <span className={cn("mt-[0.6em] size-2 shrink-0 rounded-full", running ? "animate-pulse-dot bg-signal" : "bg-chrome-ink-2")} aria-hidden />
       {!s ? (
         <Skeleton className="mt-1 h-4 w-80" />
       ) : running ? (

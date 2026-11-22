@@ -73,9 +73,9 @@ export function Progress({
       className={cn("relative h-2 w-full overflow-hidden rounded-full bg-surface-3", className)}
     >
       {indeterminate ? (
-        <div className={cn("absolute inset-y-0 w-2/5 animate-indeterminate rounded-full bg-accent", barClassName)} />
+        <div className={cn("absolute inset-y-0 w-2/5 animate-indeterminate rounded-full bg-signal", barClassName)} />
       ) : (
-        <div className={cn("h-full rounded-full bg-accent transition-[width] duration-700 ease-out", barClassName)} style={{ width: `${pct}%` }} />
+        <div className={cn("h-full rounded-full bg-signal transition-[width] duration-700 ease-out", barClassName)} style={{ width: `${pct}%` }} />
       )}
     </div>
   );

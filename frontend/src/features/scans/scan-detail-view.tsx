@@ -101,7 +101,7 @@ function PhaseStepper({ phase, done }: { phase: ScanRun["phase"]; done: boolean 
             className={cn("grid content-start gap-0.5 rounded-lg border px-3 py-2", state === "current" ? "border-accent bg-accent/[0.07]" : "border-transparent")}
           >
             <span className={cn("flex items-center gap-1.5 text-sm", state === "todo" ? "text-ink-2" : "font-semibold")}>
-              {state === "done" ? <Check className="size-3.5 text-ink-2" strokeWidth={3} aria-hidden /> : state === "current" ? <span className="size-2 animate-pulse-dot rounded-full bg-accent" aria-hidden /> : null}
+              {state === "done" ? <Check className="size-3.5 text-ink-2" strokeWidth={3} aria-hidden /> : state === "current" ? <span className="size-2 animate-pulse-dot rounded-full bg-signal" aria-hidden /> : null}
               {p.label}
               {state === "done" ? <span className="sr-only">(ukończona)</span> : null}
             </span>
