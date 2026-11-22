@@ -8,6 +8,8 @@
 //! - `gate`: one middleware over every route (deny by default, `rbac::ROUTES`), which also
 //!   writes the audit row of each changing request and of each 401/403.
 //! - Login limiter: 5 failures per login or 20 per IP in 15 minutes → 429.
+//! - Client address: the TCP peer, or — only when the peer is a trusted proxy
+//!   (`ASI_TRUSTED_PROXIES`, the dashboard) — the client it names in `X-Forwarded-For`.
 
 use crate::api::{bad, internal, ApiError};
 use crate::audit::{self, Event, Note, Outcome};
@@ -97,9 +99,41 @@ pub(crate) async fn custom_role_of(db: &sqlx::PgPool, user_id: Uuid) -> sqlx::Re
     .await
 }
 
-/// Client address (from the TCP connection), put into request extensions by `gate`.
+/// Client address (`client_ip`), put into request extensions by `gate`.
 #[derive(Debug, Clone, Copy)]
 pub struct ClientIp(pub Option<IpAddr>);
+
+/// At most this many `X-Forwarded-For` hops are looked at (right to left).
+const MAX_FORWARDED_HOPS: usize = 16;
+
+/// The client's address. A peer that is not a trusted proxy is the client, whatever headers
+/// it sends. Behind trusted proxies (the dashboard, and the TLS proxy in front of it) the client
+/// is the right-most `X-Forwarded-For` entry that is not itself a trusted proxy: entries left of
+/// it were written by the client and prove nothing. An entry that is not a bare IP address ends
+/// the walk at the last trusted hop, so a malformed header can only make every client share the
+/// proxy's limit, never pick an address of its choice.
+pub fn client_ip(peer: Option<IpAddr>, headers: &HeaderMap, trusted: &[ipnet::IpNet]) -> Option<IpAddr> {
+    let is_trusted = |ip: &IpAddr| trusted.iter().any(|net| net.contains(ip));
+    let mut ip = peer?.to_canonical();
+    if !is_trusted(&ip) {
+        return Some(ip);
+    }
+    let hops: Vec<&str> = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .map(|v| v.to_str().unwrap_or(""))
+        .flat_map(|v| v.split(','))
+        .map(str::trim)
+        .collect();
+    for hop in hops.iter().rev().take(MAX_FORWARDED_HOPS) {
+        let Ok(next) = hop.parse::<IpAddr>() else { break };
+        ip = next.to_canonical();
+        if !is_trusted(&ip) {
+            break;
+        }
+    }
+    Some(ip)
+}
 
 // ---------- passwords and tokens ----------
 
@@ -277,7 +311,8 @@ fn is_safe(method: &Method) -> bool {
 /// admin-only and logged.
 pub async fn gate(State(s): State<AppState>, req: Request, next: Next) -> Response {
     let (mut parts, body) = req.into_parts();
-    let ip = parts.extensions.get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip());
+    let peer = parts.extensions.get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip());
+    let ip = client_ip(peer, &parts.headers, &s.config.trusted_proxies);
     parts.extensions.insert(ClientIp(ip));
     let method = parts.method.clone();
     let Some(path) = parts.extensions.get::<MatchedPath>().map(|p| p.as_str().to_string()) else {
@@ -610,6 +645,32 @@ mod tests {
         assert!(normalize_username("-admin").is_err());
         assert!(normalize_username("ad min").is_err());
         assert!(normalize_username("jan.kowalski_2").is_ok());
+    }
+
+    #[test]
+    fn client_address_behind_trusted_proxies_only() {
+        let nets = crate::config::parse_nets("10.231.70.250,10.231.72.0/24").unwrap();
+        let ip = |s: &str| Some(s.parse::<IpAddr>().unwrap());
+        let xff = |v: &str| headers(&[("x-forwarded-for", v)]);
+        // A direct client (not a trusted proxy) cannot choose its address.
+        assert_eq!(client_ip(ip("192.0.2.7"), &xff("203.0.113.9"), &nets), ip("192.0.2.7"));
+        assert_eq!(client_ip(ip("192.0.2.7"), &headers(&[]), &nets), ip("192.0.2.7"));
+        // Through the dashboard: the address it forwards.
+        assert_eq!(client_ip(ip("10.231.70.250"), &xff("198.51.100.4"), &nets), ip("198.51.100.4"));
+        // Right-most untrusted hop wins; what the client prepended is ignored.
+        assert_eq!(client_ip(ip("10.231.70.250"), &xff("6.6.6.6, 198.51.100.4, 10.231.72.250"), &nets), ip("198.51.100.4"));
+        // Several header lines are one list, in order.
+        let two = headers(&[("x-forwarded-for", "6.6.6.6"), ("x-forwarded-for", "198.51.100.4")]);
+        assert_eq!(client_ip(ip("10.231.70.250"), &two, &nets), ip("198.51.100.4"));
+        // No header, or garbage: the last trusted hop (all such clients share its limit).
+        assert_eq!(client_ip(ip("10.231.70.250"), &headers(&[]), &nets), ip("10.231.70.250"));
+        assert_eq!(client_ip(ip("10.231.70.250"), &xff("unknown"), &nets), ip("10.231.70.250"));
+        assert_eq!(client_ip(ip("10.231.70.250"), &xff("6.6.6.6, 1.2.3.4:80, 10.231.72.9"), &nets), ip("10.231.72.9"));
+        // IPv4-mapped IPv6 peers are matched as IPv4.
+        assert_eq!(client_ip(ip("::ffff:10.231.70.250"), &xff("2001:db8::1"), &nets), ip("2001:db8::1"));
+        // Without trusted proxies nothing is trusted.
+        assert_eq!(client_ip(ip("10.231.70.250"), &xff("198.51.100.4"), &[]), ip("10.231.70.250"));
+        assert_eq!(client_ip(None, &xff("198.51.100.4"), &nets), None);
     }
 
     #[test]

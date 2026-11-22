@@ -328,7 +328,7 @@ pub(crate) async fn load_targets(db: &sqlx::PgPool, key: &str, ids: Option<&[Uui
     let rows = sqlx::query_as::<_, TargetRow>(sqlx::AssertSqlSafe(format!(
         "WITH latest AS ({LATEST})
          SELECT t.id, t.value, t.kind::text AS kind, t.label AS name, t.owner, t.criticality, t.tags,
-                COALESCE(pgp_sym_decrypt(t.notes_enc, $1), t.notes) AS notes, t.excluded, t.source,
+                COALESCE(asi_decrypt(t.notes_enc, $1), t.notes) AS notes, t.excluded, t.source,
                 t.created_at, t.updated_at, u.username AS updated_by,
                 COALESCE(a.active_hosts, 0) AS active_hosts, a.last_scanned_at
          FROM targets t
@@ -1394,7 +1394,7 @@ pub(crate) async fn load_findings(db: &sqlx::PgPool, key: &str) -> V1<Vec<Findin
     .into_iter()
     .collect();
     let states: HashMap<Uuid, StateRow> = sqlx::query_as::<_, StateRow>(
-        "SELECT finding_id, status, score_override, assignee, tags, pgp_sym_decrypt(notes_enc, $1) AS notes, defectdojo
+        "SELECT finding_id, status, score_override, assignee, tags, asi_decrypt(notes_enc, $1) AS notes, defectdojo
          FROM finding_states",
     )
     .bind(key)

@@ -31,6 +31,9 @@ use uuid::Uuid;
 const MAX_CONDITIONS: usize = 20;
 const MAX_PATTERN: usize = 512;
 const MAX_VALUE: usize = 4096;
+/// Page bodies (html conditions, path probes) are matched over everything the scanner keeps
+/// (pipeline.rs BODY_KEEP / PROBE_KEEP): a CMS often puts its generator tag past the first 4 KiB.
+const MAX_BODY: usize = 32 * 1024;
 const CATEGORIES: [&str; 10] =
     ["admin_panel", "staging", "outdated", "header", "cookie", "tls", "exposure", "iot", "signature", "technology"];
 
@@ -264,7 +267,11 @@ pub struct Subject {
 }
 
 fn clip(s: &str) -> &str {
-    match s.char_indices().nth(MAX_VALUE) {
+    clip_to(s, MAX_VALUE)
+}
+
+fn clip_to(s: &str, max: usize) -> &str {
+    match s.char_indices().nth(max) {
         Some((i, _)) => &s[..i],
         None => s,
     }
@@ -276,16 +283,36 @@ fn norm_name(n: &str) -> String {
 
 /// Does `value` satisfy the operator? Returns the matched text as evidence.
 fn test_op(c: &Compiled, value: &str) -> Option<String> {
-    let v = clip(value);
+    let v = value_of(c, value);
     let want = c.cond.value.as_deref().unwrap_or_default();
-    let hit = match c.cond.op.as_str() {
-        "exists" => true,
-        "equals" => v.eq_ignore_ascii_case(want),
-        "contains" => v.to_lowercase().contains(&want.to_lowercase()),
-        "regex" => c.re.as_ref().is_some_and(|r| r.is_match(v)),
-        _ => false,
+    // Byte range of what matched, so the evidence shows it and not the start of a page.
+    let at: Option<(usize, usize)> = match c.cond.op.as_str() {
+        "exists" => Some((0, 0)),
+        "equals" => v.eq_ignore_ascii_case(want).then_some((0, v.len())),
+        "contains" => {
+            // ASCII folding keeps byte offsets; other letters (e.g. Polish) fall back to full folding.
+            let lower = v.to_ascii_lowercase();
+            lower
+                .find(&want.to_ascii_lowercase())
+                .map(|i| (i, i + want.len()))
+                .or_else(|| v.to_lowercase().contains(&want.to_lowercase()).then_some((0, 0)))
+        }
+        "regex" => c.re.as_ref().and_then(|r| r.find(v)).map(|m| (m.start(), m.end())),
+        _ => None,
     };
-    hit.then(|| v.chars().take(200).collect())
+    let (start, _) = at?;
+    Some(snippet(v, start))
+}
+
+/// The value a condition is matched against: whole kept page bodies, other fields up to 4096 chars.
+fn value_of<'a>(c: &Compiled, value: &'a str) -> &'a str {
+    if matches!(c.cond.kind.as_str(), "html" | "path") { clip_to(value, MAX_BODY) } else { clip(value) }
+}
+
+/// Up to 200 characters of `v` starting 40 characters before byte offset `start`.
+fn snippet(v: &str, start: usize) -> String {
+    let from = v[..start].char_indices().rev().nth(39).map_or(0, |(i, _)| i);
+    v[from..].chars().take(200).collect::<String>().trim().to_string()
 }
 
 /// One condition against a subject: (matched, evidence, extracted version).
@@ -319,7 +346,7 @@ fn eval_condition(c: &Compiled, s: &Subject) -> (bool, Option<String>, Option<St
                 return (false, None, None);
             }
             let ev = format!("GET {} → HTTP {}", p.path, p.status.unwrap_or_default());
-            let extract = |v: &str| c.extract.as_ref().and_then(|r| r.captures(clip(v))).and_then(|m| m.get(1)).map(|m| m.as_str().to_string());
+            let extract = |v: &str| c.extract.as_ref().and_then(|r| r.captures(value_of(c, v))).and_then(|m| m.get(1)).map(|m| m.as_str().to_string());
             if c.cond.op == "exists" {
                 return (true, Some(ev), p.body.as_deref().and_then(extract));
             }
@@ -333,18 +360,20 @@ fn eval_condition(c: &Compiled, s: &Subject) -> (bool, Option<String>, Option<St
         _ => {}
     }
     for (ev, value) in &candidates {
-        if test_op(c, value).is_some() {
+        if let Some(hit) = test_op(c, value) {
             let extracted = c
                 .extract
                 .as_ref()
-                .and_then(|r| r.captures(clip(value)))
+                .and_then(|r| r.captures(value_of(c, value)))
                 .and_then(|cap| cap.get(1))
                 .map(|m| m.as_str().to_string());
             // A version condition with `extract` only matches when something was extracted.
             if c.cond.kind == "version" && c.extract.is_some() && extracted.is_none() {
                 continue;
             }
-            return (true, Some(ev.chars().take(240).collect()), extracted);
+            // A page body as evidence is the matched fragment, not the label alone.
+            let evidence = if c.cond.kind == "html" { format!("{ev}: {hit}") } else { ev.clone() };
+            return (true, Some(evidence.chars().take(240).collect()), extracted);
         }
     }
     (false, None, None)
@@ -541,7 +570,7 @@ struct EvidenceRow {
 async fn load_probes(db: &sqlx::PgPool, key: &str, run: Option<Uuid>, service: Option<Uuid>) -> sqlx::Result<BTreeMap<Uuid, Vec<Probe>>> {
     type ProbeRow = (Uuid, String, Option<i32>, Option<String>, Option<String>);
     let rows: Vec<ProbeRow> = sqlx::query_as(
-        "SELECT service_id, path, status_code, title, pgp_sym_decrypt(body_enc, $3) FROM http_probes
+        "SELECT service_id, path, status_code, title, asi_decrypt(body_enc, $3) FROM http_probes
          WHERE ($1::uuid IS NULL OR run_id = $1) AND ($2::uuid IS NULL OR service_id = $2)",
     )
     .bind(run)
@@ -561,8 +590,8 @@ pub async fn evaluate_run(db: &sqlx::PgPool, key: &str, run_id: Uuid) -> sqlx::R
     let sigs = load_active(db).await?;
     let rows = sqlx::query_as::<_, EvidenceRow>(
         "SELECT s.id AS service_id, f.url, f.status_code, f.title, f.favicon_hash, f.technologies, s.product, s.version,
-                pgp_sym_decrypt(f.headers_enc, $2)::jsonb AS headers, pgp_sym_decrypt(f.cookies_enc, $2)::jsonb AS cookies,
-                pgp_sym_decrypt(f.body_enc, $2) AS body
+                asi_decrypt(f.headers_enc, $2)::jsonb AS headers, asi_decrypt(f.cookies_enc, $2)::jsonb AS cookies,
+                asi_decrypt(f.body_enc, $2) AS body
          FROM hosts h JOIN services s ON s.host_id = h.id LEFT JOIN http_findings f ON f.service_id = s.id
          WHERE h.run_id = $1",
     )
@@ -718,7 +747,7 @@ pub async fn finished_hits(db: &sqlx::PgPool) -> sqlx::Result<Vec<Hit>> {
 pub async fn hit_evidence(db: &sqlx::PgPool, key: &str, hits: &[(Uuid, Uuid)]) -> sqlx::Result<HashMap<(Uuid, Uuid), Vec<String>>> {
     let (sigs, services): (Vec<Uuid>, Vec<Uuid>) = hits.iter().copied().unzip();
     let rows: Vec<(Uuid, Uuid, Option<String>)> = sqlx::query_as(
-        "SELECT h.signature_id, h.service_id, pgp_sym_decrypt(h.evidence_enc, $1)
+        "SELECT h.signature_id, h.service_id, asi_decrypt(h.evidence_enc, $1)
          FROM signature_hits h JOIN UNNEST($2::uuid[], $3::uuid[]) AS w(sig, svc) ON w.sig = h.signature_id AND w.svc = h.service_id",
     )
     .bind(key)
@@ -913,8 +942,8 @@ pub async fn test(State(s): State<AppState>, Json(b): Json<TestBody>) -> Result<
         TestTarget::Service { service_id } => {
             let r = sqlx::query_as::<_, EvidenceRow>(
                 "SELECT s.id AS service_id, f.url, f.status_code, f.title, f.favicon_hash, f.technologies, s.product, s.version,
-                        pgp_sym_decrypt(f.headers_enc, $2)::jsonb AS headers, pgp_sym_decrypt(f.cookies_enc, $2)::jsonb AS cookies,
-                        pgp_sym_decrypt(f.body_enc, $2) AS body
+                        asi_decrypt(f.headers_enc, $2)::jsonb AS headers, asi_decrypt(f.cookies_enc, $2)::jsonb AS cookies,
+                        asi_decrypt(f.body_enc, $2) AS body
                  FROM services s LEFT JOIN http_findings f ON f.service_id = s.id WHERE s.id = $1 LIMIT 1",
             )
             .bind(service_id)
@@ -1178,6 +1207,22 @@ mod tests {
         let ev = evaluate("and", &compile(&footer).unwrap().0, &s);
         assert!(ev.matched);
         assert_eq!(ev.version.as_deref(), Some("WordPress 6.4.2"));
+    }
+
+    #[test]
+    fn html_matches_past_4_kib_with_evidence_at_the_match() {
+        let generator = sig(json!([{ "type": "html", "op": "regex", "value": r#"<meta name="generator" content="WordPress"#,
+            "extract": r#"content="WordPress ([\d.]+)"# }]), "and");
+        let (c, _) = compile(&generator).unwrap();
+        let mut s = subject();
+        // WordPress 4.7 puts the tag past byte 4096; anything inside the kept 32 KiB must count.
+        s.body = Some(format!("{}<meta name=\"generator\" content=\"WordPress 4.7.5\" />", "x".repeat(20_000)));
+        let ev = evaluate("and", &c, &s);
+        assert!(ev.matched);
+        assert_eq!(ev.version.as_deref(), Some("4.7.5"));
+        assert!(ev.conditions[0].1.as_deref().unwrap().contains("WordPress 4.7.5"), "evidence shows the match");
+        s.body = Some(format!("{}<meta name=\"generator\" content=\"WordPress 4.7.5\" />", "x".repeat(MAX_BODY)));
+        assert!(!evaluate("and", &c, &s).matched, "nothing past what the scanner keeps");
     }
 
     #[test]

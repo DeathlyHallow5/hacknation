@@ -8,6 +8,12 @@ pub struct Config {
     pub bind_addr: String,
     /// Symmetric key for pgp_sym_encrypt (Encryption at Rest). Never stored in the DB.
     pub data_key: String,
+    /// `ASI_DATA_KEY_PREVIOUS`: the key being rotated out. Reads fall back to it (`asi_decrypt`)
+    /// until `POST /api/v1/security/encryption/rotate` has re-encrypted every row (keyring.rs).
+    pub data_key_previous: Option<String>,
+    /// `ASI_TRUSTED_PROXIES` (IPs/CIDRs): peers whose `X-Forwarded-For` names the client — the
+    /// dashboard container. Every other peer is the client itself (`auth::client_ip`).
+    pub trusted_proxies: Vec<ipnet::IpNet>,
     /// Directory with nmap / ProjectDiscovery binaries.
     pub tools_dir: String,
     /// Worker threads handed to naabu/httpx (capped at 100).
@@ -118,6 +124,8 @@ impl Config {
             database_url: secret("DATABASE_URL")?.context("DATABASE_URL is not set")?,
             bind_addr: std::env::var("ASI_BIND").unwrap_or_else(|_| "0.0.0.0:8000".into()),
             data_key: secret("ASI_DATA_KEY")?.context("ASI_DATA_KEY is not set")?,
+            data_key_previous: secret("ASI_DATA_KEY_PREVIOUS")?,
+            trusted_proxies: parse_nets(&std::env::var("ASI_TRUSTED_PROXIES").unwrap_or_default()).context("invalid ASI_TRUSTED_PROXIES")?,
             tools_dir: std::env::var("ASI_TOOLS_DIR").unwrap_or_else(|_| "/opt/asi-tools".into()),
             max_concurrency: std::env::var("ASI_MAX_CONCURRENCY")
                 .ok()
@@ -151,7 +159,17 @@ impl Config {
             admin_password: secret("ASI_ADMIN_PASSWORD")?,
             syn_scan: None,
         }
-        .with_syn_scan())
+        .with_syn_scan()
+        .with_previous_key())
+    }
+
+    /// A previous key equal to the current one is no previous key.
+    fn with_previous_key(mut self) -> Self {
+        if self.data_key_previous.as_deref() == Some(self.data_key.as_str()) {
+            tracing::warn!("ASI_DATA_KEY_PREVIOUS equals ASI_DATA_KEY: ignored");
+            self.data_key_previous = None;
+        }
+        self
     }
 
     fn with_syn_scan(mut self) -> Self {
@@ -174,6 +192,8 @@ impl Config {
             database_url: String::new(),
             bind_addr: String::new(),
             data_key: "test-only".into(),
+            data_key_previous: None,
+            trusted_proxies: Vec::new(),
             tools_dir: "/nonexistent".into(),
             max_concurrency: 1,
             max_runs: 0,
@@ -203,6 +223,8 @@ impl std::fmt::Debug for Config {
             .field("database_url", &"<redacted>")
             .field("bind_addr", &self.bind_addr)
             .field("data_key", &hidden(!self.data_key.is_empty()))
+            .field("data_key_previous", &hidden(self.data_key_previous.is_some()))
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("tools_dir", &self.tools_dir)
             .field("max_concurrency", &self.max_concurrency)
             .field("max_runs", &self.max_runs)
@@ -214,6 +236,20 @@ impl std::fmt::Debug for Config {
             .field("admin_password", &hidden(self.admin_password.is_some()))
             .finish()
     }
+}
+
+/// Comma-separated IPv4/IPv6 addresses or CIDRs (a bare address is a /32 or /128).
+pub(crate) fn parse_nets(spec: &str) -> Result<Vec<ipnet::IpNet>> {
+    spec.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            s.parse::<ipnet::IpNet>()
+                .or_else(|_| s.parse::<std::net::IpAddr>().map(ipnet::IpNet::from))
+                .map(|n| n.trunc())
+                .with_context(|| format!("not an IP address or CIDR: {s}"))
+        })
+        .collect()
 }
 
 /// `ASI_DNS_RESOLVERS` (comma-separated ip[:port]), else the nameservers of /etc/resolv.conf.
@@ -235,6 +271,17 @@ fn dns_resolvers() -> Option<String> {
 #[cfg(test)]
 mod scope_tests {
     use super::*;
+
+    #[test]
+    fn trusted_proxy_lists() {
+        let n = parse_nets(" 10.231.70.250, 172.18.0.0/16 ,fd00::1,").unwrap();
+        assert_eq!(n.iter().map(ToString::to_string).collect::<Vec<_>>(), ["10.231.70.250/32", "172.18.0.0/16", "fd00::1/128"]);
+        assert_eq!(parse_nets("10.0.0.7/8").unwrap()[0].to_string(), "10.0.0.0/8", "host bits dropped");
+        assert!(parse_nets("").unwrap().is_empty());
+        for bad in ["web", "10.0.0.0/33", "1.2.3.4:80", "*"] {
+            assert!(parse_nets(bad).is_err(), "{bad}");
+        }
+    }
     #[test]
     fn network_boundaries() {
         let mut cfg = Config::for_tests();

@@ -5,7 +5,10 @@
 //!
 //! Safety: every tool gets the scan's `rate_limit_pps`; batches run sequentially so a run
 //! never exceeds that rate; tool timeouts are capped by the scan window, so a run stops at
-//! the window end and resumes from its checkpoint in the next window.
+//! the window end and resumes from its checkpoint in the next window. Names are resolved once
+//! per batch, by the core, and checked against the approved networks; the tools get only the
+//! resulting addresses (`pin`), so DNS rebinding cannot steer them elsewhere, and httpx never
+//! follows redirects (a `Location` is recorded as data, never fetched).
 //!
 //! Integrity: targets and scan settings are frozen per run; a batch whose tools fail is
 //! retried once at half size, then recorded as not covered and the run ends `partial`
@@ -537,6 +540,97 @@ impl Drop for ListFile {
     }
 }
 
+/// A batch's inputs with DNS pinned: what each approved name resolved to (checked by
+/// `Config::resolve_in_scope`) at the start of the batch. Only `ips` reach the tools.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Pinned {
+    /// Addresses to scan, in input order without repeats: IP inputs as given, names replaced
+    /// by their addresses.
+    pub ips: Vec<String>,
+    /// Address → operator-supplied name it was resolved from (the first one, in input order).
+    pub names: BTreeMap<String, String>,
+}
+
+impl Pinned {
+    fn contains(&self, ip: &str) -> bool {
+        self.ips.iter().any(|x| x == ip)
+    }
+}
+
+pub(crate) fn pin(inputs: &[String], resolved: &BTreeMap<String, Vec<std::net::Ipv4Addr>>) -> Pinned {
+    let mut out = Pinned::default();
+    for input in inputs {
+        let addrs: Vec<String> = match resolved.get(input) {
+            Some(ips) => ips.iter().map(ToString::to_string).collect(),
+            None => vec![input.clone()],
+        };
+        for ip in addrs {
+            if resolved.contains_key(input) {
+                out.names.entry(ip.clone()).or_insert_with(|| input.clone());
+            }
+            if !out.contains(&ip) {
+                out.ips.push(ip);
+            }
+        }
+    }
+    out
+}
+
+/// httpx input line: `name,address:port` (or `name,scheme://address:port`) connects to the
+/// address — httpx resolves nothing — and sends the name as `Host`; plain `address:port` else.
+fn httpx_line(name: Option<&str>, target: &str) -> String {
+    match name {
+        Some(n) => format!("{n},{target}"),
+        None => target.to_string(),
+    }
+}
+
+/// Put the virtual host back into a record probed through a pinned line: httpx reports the
+/// address it connected to, while findings are keyed by the URL the operator's name gives
+/// (`http://name:port/...`), as before pinning.
+fn unpin(rec: &mut parse::HttpxRecord) {
+    let Some((name, _)) = rec.input.split_once(',') else { return };
+    let name = name.to_string();
+    let ip = rec.ip().to_string();
+    if let Some((scheme, rest)) = rec.url.split_once("://")
+        && let Some(after) = rest.strip_prefix(ip.as_str())
+        && (after.is_empty() || after.starts_with([':', '/']))
+    {
+        rec.url = format!("{scheme}://{name}{after}");
+    }
+    if rec.host_ip.is_none() {
+        rec.host_ip = Some(ip);
+    }
+    rec.input = format!("{name}:{}", rec.port);
+    rec.host = name;
+}
+
+/// httpx arguments shared by every invocation. Never `-fr` / `-fhr`: without them httpx does
+/// not follow redirects, so a 30x cannot send it to a host outside the batch (F-03).
+fn httpx_base_args<'a>(list: &'a str, ua_header: &'a str, rate: &'a str, threads: &'a str, sni: Option<&'a str>) -> Vec<&'a str> {
+    let mut args = vec![
+        "-l", list, "-json", "-silent", "-nc", "-duc", "-ip", "-random-agent=false", "-H", ua_header, "-rl", rate, "-t", threads,
+        "-timeout", "5",
+    ];
+    // TLS server name of the pinned virtual host (one name per invocation: see `by_name`).
+    if let Some(name) = sni {
+        args.extend(["-sni", name]);
+    }
+    args
+}
+
+/// Lines grouped by the name they carry (None: plain addresses), one httpx run per group.
+fn by_name(lines: impl IntoIterator<Item = (Option<String>, String)>) -> BTreeMap<Option<String>, Vec<String>> {
+    let mut groups: BTreeMap<Option<String>, Vec<String>> = BTreeMap::new();
+    for (name, line) in lines {
+        let lines = groups.entry(name).or_default();
+        if !lines.contains(&line) {
+            lines.push(line);
+        }
+    }
+    groups
+}
+
 pub(crate) async fn run_batch(
     state: &AppState,
     scan: &ScanConfig,
@@ -545,18 +639,20 @@ pub(crate) async fn run_batch(
     inputs: &[String],
     budget: Duration,
 ) -> Result<BatchStats> {
-    // Addresses the tools may report back: the inputs, plus what approved names resolve to now
-    // (a name may have changed since the scan was planned, so it is resolved again here).
-    let mut resolved: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    // Resolve approved names once, here (a name may have changed since the scan was planned),
+    // and hand the tools only these checked addresses: no tool resolves a name itself, so a
+    // name re-pointed in the meantime (DNS rebinding) cannot lead one outside the allowlist.
+    let mut resolved: BTreeMap<String, Vec<std::net::Ipv4Addr>> = BTreeMap::new();
     for target in inputs {
         let approved = state.config.permits_target(target);
         anyhow::ensure!(approved, "target outside administrator-approved network");
         if state.config.permits_domain(target) {
-            for ip in state.config.resolve_in_scope(target).await.map_err(|e| anyhow::anyhow!(e))? {
-                resolved.insert(ip.to_string());
-            }
+            let ips = state.config.resolve_in_scope(target).await.map_err(|e| anyhow::anyhow!(e))?;
+            resolved.insert(target.clone(), ips);
         }
     }
+    let pinned = pin(inputs, &resolved);
+    anyhow::ensure!(pinned.ips.iter().all(|ip| state.config.permits_target(ip)), "target outside administrator-approved network");
     let tools = state.config.tools_dir.as_str();
     let allowed = &state.config.allowed_ports;
     anyhow::ensure!(state.config.permits_ports(&scan.ports), "use explicit approved ports");
@@ -584,7 +680,7 @@ pub(crate) async fn run_batch(
     //    the inputs of step 2 (F-06): "no answer to probes" is not "no services".
     let mut alive: BTreeMap<String, Option<String>> = BTreeMap::new();
     if scan.preflight {
-        let list = ListFile::new(run_id, index, "pre", inputs.to_vec()).await?;
+        let list = ListFile::new(run_id, index, "pre", pinned.ips.clone()).await?;
         let xml = engine::run(
             tools,
             Tool::Nmap,
@@ -597,18 +693,22 @@ pub(crate) async fn run_batch(
         )
         .await
         .context("pre-flight")?;
-        alive = parse::nmap_alive(&xml)?;
+        let up = parse::nmap_alive(&xml)?;
+        anyhow::ensure!(up.keys().all(|ip| pinned.contains(ip)), "tool returned address outside approved batch");
+        alive = up.into_keys().map(|ip| { let name = pinned.names.get(&ip).cloned(); (ip, name) }).collect();
     }
 
     // 2) Open ports on every input. CONNECT scan by default (no raw-socket capabilities);
     //    SYN (half-open, nothing reaches the applications) when enabled — compose.syn.yaml.
-    let list = ListFile::new(run_id, index, "ports", inputs.to_vec()).await?;
+    let list = ListFile::new(run_id, index, "ports", pinned.ips.clone()).await?;
     let syn = state.config.syn_scan.as_deref();
     // -duc: no update check — the scanner never talks to anything but the targets.
     let mut naabu_args = vec![
         "-l", list.arg(), "-s", if syn.is_some() { "s" } else { "c" }, "-Pn", "-rate", &rate, "-c", &threads,
         "-retries", "1", "-json", "-silent", "-duc",
     ];
+    // Only addresses in the list, so naabu has nothing to resolve; kept so it never falls
+    // back to public resolvers should a name ever slip through.
     if let Some(r) = state.config.dns_resolvers.as_deref() {
         naabu_args.extend(["-r", r]);
     }
@@ -621,9 +721,11 @@ pub(crate) async fn run_batch(
         None => engine::run(tools, Tool::Naabu, &naabu_args, left()).await,
     }
     .context("naabu")?;
-    let open = parse::naabu(&naabu_out);
-    anyhow::ensure!(open.iter().all(|(ip,h)| (inputs.contains(ip) || resolved.contains(ip)) && state.config.permits_target(ip) && h.ports.iter().all(|port| allowed.contains(port))), "tool returned address outside approved batch");
-    for (ip, hp) in &open {
+    let mut open = parse::naabu(&naabu_out);
+    anyhow::ensure!(open.iter().all(|(ip,h)| pinned.contains(ip) && state.config.permits_target(ip) && h.ports.iter().all(|port| allowed.contains(port))), "tool returned address outside approved batch");
+    for (ip, hp) in open.iter_mut() {
+        // The name comes from our own resolution, never from what a tool reports.
+        hp.hostname = pinned.names.get(ip).cloned();
         alive.entry(ip.clone()).or_insert_with(|| hp.hostname.clone());
     }
     stats.alive = alive.len() as u64;
@@ -666,10 +768,11 @@ pub(crate) async fn run_batch(
     //    log them as protocol errors). If version detection failed, every open port.
     let mut http = Vec::new();
     if !open.is_empty() {
-        let endpoints: Vec<String> = open.iter().flat_map(|(ip, hp)| {
-            // Never reconnect using a name learned from a remote service; a domain the
-            // operator gave as a target is used as is (virtual hosts answer by name).
-            let name = hp.hostname.as_ref().filter(|h| inputs.contains(h)).unwrap_or(ip);
+        // (name, line): a domain the operator gave as a target is probed by name (virtual hosts
+        // answer by name) but connected to at its pinned address; never a name learned from a
+        // remote service.
+        let endpoints = open.iter().flat_map(|(ip, hp)| {
+            let name = pinned.names.get(ip);
             let services = &services;
             hp.ports
                 .iter()
@@ -679,32 +782,24 @@ pub(crate) async fn run_batch(
                     let svc = services.get(&(ip.clone(), **p)).filter(|s| s.confidence >= 0.5);
                     sv_failed || may_speak_http(svc.and_then(|s| s.name.as_deref()))
                 })
-                .map(move |p| format!("{name}:{p}"))
-        }).collect();
-        let list = ListFile::new(run_id, index, "http", endpoints).await?;
-        match engine::run(
-            tools,
-            Tool::Httpx,
-            &[
-                "-l", list.arg(), "-json", "-silent", "-nc", "-sc", "-title", "-server", "-td", "-duc",
-                "-random-agent=false", "-H", &ua_header,
-                // No -fr: redirects are recorded (-location), never followed, so a 30x cannot
-                // lead the scanner outside the approved targets (F-03).
-                "-irh", "-tls-grab", "-location", "-ip",
+                .map(move |p| (name.cloned(), httpx_line(name.map(String::as_str), &format!("{ip}:{p}"))))
+        });
+        for (group, (name, lines)) in by_name(endpoints).into_iter().enumerate() {
+            let list = ListFile::new(run_id, index, &format!("http{group}"), lines).await?;
+            let mut args = httpx_base_args(list.arg(), &ua_header, &rate, &threads, name.as_deref());
+            args.extend([
+                "-sc", "-title", "-server", "-td", "-irh", "-tls-grab", "-location",
                 // Page body for html/footer signatures, read up to 32 KiB per page.
-                "-irr", "-rstr", BODY_READ,
-                "-rl", &rate, "-t", &threads, "-timeout", "5", "-retries", "1",
-            ],
-            left(),
-        )
-        .await
-        {
-            Ok(out) => {
-                http = parse::httpx(&out);
-                // Never persist raw HTTP output containing credentials.
+                "-irr", "-rstr", BODY_READ, "-retries", "1",
+            ]);
+            match engine::run(tools, Tool::Httpx, &args, left()).await {
+                Ok(out) => http.extend(parse::httpx(&out).into_iter().map(|(mut r, raw)| {
+                    unpin(&mut r);
+                    (r, raw)
+                })),
+                Err(e) if left().is_zero() => return Err(e.context("window closed during httpx")),
+                Err(e) => tracing::warn!(%run_id, index, "httpx failed: {e:#}"),
             }
-            Err(e) if left().is_zero() => return Err(e.context("window closed during httpx")),
-            Err(e) => tracing::warn!(%run_id, index, "httpx failed: {e:#}"),
         }
     }
 
@@ -714,27 +809,30 @@ pub(crate) async fn run_batch(
     let mut probes = Vec::new();
     let paths = crate::signatures::probe_paths(&state.db).await?;
     if !http.is_empty() && !paths.is_empty() {
-        let bases: std::collections::BTreeSet<String> = http
-            .iter()
-            .filter_map(|(r, _)| Some(format!("{}://{}:{}", r.url.split("://").next()?, r.input.rsplit_once(':')?.0, r.port)))
-            .collect();
-        let list = ListFile::new(run_id, index, "probe", bases.into_iter().collect()).await?;
+        // Same pinning as above: connect to the address httpx reported, Host/SNI = the name.
+        let bases = http.iter().filter_map(|(r, _)| {
+            let scheme = r.url.split("://").next()?;
+            let ip = r.ip();
+            if !pinned.contains(ip) {
+                return None;
+            }
+            let name = pinned.names.get(ip).filter(|n| **n == r.host).cloned();
+            let line = httpx_line(name.as_deref(), &format!("{scheme}://{ip}:{}", r.port));
+            Some((name, line))
+        });
         let joined = paths.join(",");
-        match engine::run(
-            tools,
-            Tool::Httpx,
-            &[
-                "-l", list.arg(), "-path", &joined, "-json", "-silent", "-nc", "-sc", "-title", "-duc", "-ip",
-                "-random-agent=false", "-H", &ua_header, "-irr", "-rstr", PROBE_READ,
-                "-rl", &rate, "-t", &threads, "-timeout", "5", "-retries", "0",
-            ],
-            left(),
-        )
-        .await
-        {
-            Ok(out) => probes = parse::httpx(&out),
-            Err(e) if left().is_zero() => return Err(e.context("window closed during path probes")),
-            Err(e) => tracing::warn!(%run_id, index, "path probes failed: {e:#}"),
+        for (group, (name, lines)) in by_name(bases).into_iter().enumerate() {
+            let list = ListFile::new(run_id, index, &format!("probe{group}"), lines).await?;
+            let mut args = httpx_base_args(list.arg(), &ua_header, &rate, &threads, name.as_deref());
+            args.extend(["-path", &joined, "-sc", "-title", "-irr", "-rstr", PROBE_READ, "-retries", "0"]);
+            match engine::run(tools, Tool::Httpx, &args, left()).await {
+                Ok(out) => probes.extend(parse::httpx(&out).into_iter().map(|(mut r, raw)| {
+                    unpin(&mut r);
+                    (r, raw)
+                })),
+                Err(e) if left().is_zero() => return Err(e.context("window closed during path probes")),
+                Err(e) => tracing::warn!(%run_id, index, "path probes failed: {e:#}"),
+            }
         }
     }
 
@@ -883,7 +981,7 @@ mod tests {
         assert_eq!(g.iter().map(|x| x.1.len()).sum::<usize>(), 40, "every host still covered");
     }
 
-    use super::{may_speak_http, next_batch_size, parse, port_groups, valid_ports};
+    use super::{by_name, httpx_base_args, httpx_line, may_speak_http, next_batch_size, parse, pin, port_groups, unpin, valid_ports, Pinned};
     use std::collections::BTreeMap;
     use chrono::{Duration, Utc};
 
@@ -898,6 +996,73 @@ mod tests {
         assert!((28..=30).contains(&next_batch_size(10, 10.0, d, 1000)));
         // Very slow scan never drops below one input.
         assert_eq!(next_batch_size(1, 600.0, None, 64), 1);
+    }
+
+    #[test]
+    fn names_are_pinned_to_their_checked_addresses() {
+        let inputs: Vec<String> = ["172.30.0.10", "www.asi.test", "blog.asi.test", "172.30.0.13", "alias.asi.test"].map(String::from).to_vec();
+        let resolved: BTreeMap<String, Vec<std::net::Ipv4Addr>> = [
+            ("www.asi.test".to_string(), vec!["172.30.0.10".parse().unwrap(), "172.30.0.12".parse().unwrap()]),
+            ("blog.asi.test".to_string(), vec!["172.30.0.13".parse().unwrap()]),
+            ("alias.asi.test".to_string(), vec!["172.30.0.12".parse().unwrap()]),
+        ]
+        .into_iter()
+        .collect();
+        let p = pin(&inputs, &resolved);
+        // Only addresses reach the tools, each once.
+        assert_eq!(p.ips, ["172.30.0.10", "172.30.0.12", "172.30.0.13"]);
+        assert!(p.ips.iter().all(|ip| ip.parse::<std::net::Ipv4Addr>().is_ok()));
+        // Names come from our resolution only; the first name for an address wins.
+        assert_eq!(p.names.get("172.30.0.10").map(String::as_str), Some("www.asi.test"));
+        assert_eq!(p.names.get("172.30.0.12").map(String::as_str), Some("www.asi.test"));
+        assert_eq!(p.names.get("172.30.0.13").map(String::as_str), Some("blog.asi.test"));
+        assert_eq!(pin(&["10.0.0.1".to_string()], &BTreeMap::new()), Pinned { ips: vec!["10.0.0.1".into()], names: BTreeMap::new() });
+    }
+
+    #[test]
+    fn httpx_lines_connect_to_the_pinned_address() {
+        assert_eq!(httpx_line(Some("www.asi.test"), "172.30.0.10:443"), "www.asi.test,172.30.0.10:443");
+        assert_eq!(httpx_line(Some("www.asi.test"), "https://172.30.0.10:443"), "www.asi.test,https://172.30.0.10:443");
+        assert_eq!(httpx_line(None, "172.30.0.10:80"), "172.30.0.10:80");
+        let g = by_name([
+            (Some("a.asi.test".to_string()), "a.asi.test,172.30.0.1:80".to_string()),
+            (None, "172.30.0.2:80".to_string()),
+            (Some("a.asi.test".to_string()), "a.asi.test,172.30.0.1:80".to_string()),
+            (Some("b.asi.test".to_string()), "b.asi.test,172.30.0.3:443".to_string()),
+        ]);
+        assert_eq!(g.len(), 3, "one httpx run (one SNI) per name");
+        assert_eq!(g[&Some("a.asi.test".to_string())], ["a.asi.test,172.30.0.1:80"], "no repeats");
+    }
+
+    #[test]
+    fn httpx_never_follows_redirects() {
+        for sni in [None, Some("www.asi.test")] {
+            let args = httpx_base_args("list", "User-Agent: x", "10", "5", sni);
+            for flag in ["-fr", "-follow-redirects", "-fhr", "-follow-host-redirects", "-maxr", "-max-redirects", "-resolvers", "-r", "-pa", "-probe-all-ips"] {
+                assert!(!args.contains(&flag), "{flag} in {args:?}");
+            }
+            assert_eq!(args.contains(&"-sni"), sni.is_some());
+        }
+    }
+
+    #[test]
+    fn pinned_records_keep_the_operators_name() {
+        // Real httpx 1.12 output for the input `vhost.asi.test,172.30.0.40:80` with -path.
+        let line = r#"{"port":"80","url":"http://172.30.0.40:80/headers","input":"vhost.asi.test,172.30.0.40:80","host":"172.30.0.40","host_ip":"172.30.0.40","path":"/headers","status_code":200,"failed":false}"#;
+        let (mut r, _) = parse::httpx(line).pop().unwrap();
+        unpin(&mut r);
+        assert_eq!(r.url, "http://vhost.asi.test:80/headers");
+        assert_eq!((r.host.as_str(), r.ip(), r.input.as_str()), ("vhost.asi.test", "172.30.0.40", "vhost.asi.test:80"));
+        // Plain address input: untouched.
+        let line = r#"{"port":"80","url":"http://172.30.0.4:80","input":"172.30.0.4:80","host":"172.30.0.4","failed":false}"#;
+        let (mut r, _) = parse::httpx(line).pop().unwrap();
+        unpin(&mut r);
+        assert_eq!((r.url.as_str(), r.host.as_str()), ("http://172.30.0.4:80", "172.30.0.4"));
+        // A longer address that merely starts with the pinned one is not rewritten.
+        let line = r#"{"port":"80","url":"http://172.30.0.40:80","input":"x.asi.test,172.30.0.4:80","host":"172.30.0.4","host_ip":"172.30.0.4","failed":false}"#;
+        let (mut r, _) = parse::httpx(line).pop().unwrap();
+        unpin(&mut r);
+        assert_eq!(r.url, "http://172.30.0.40:80");
     }
 
     #[test]

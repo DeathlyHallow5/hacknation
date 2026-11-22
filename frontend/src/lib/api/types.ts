@@ -999,6 +999,24 @@ export interface EncryptionStatus {
   rotated_at: ISODate;
   encrypted_fields: { table: string; column: string; description: string }[];
   last_check_at: ISODate;
+  /** Key being rotated out (ASI_DATA_KEY_PREVIOUS); null when none is configured. */
+  previous_key_id?: string | null;
+  /** Rows still encrypted with the previous key; null until counted. */
+  rows_under_previous_key?: number | null;
+  rotation?: EncryptionRotation;
+}
+
+export interface EncryptionRotation {
+  state: "idle" | "counting" | "rotating" | "done" | "failed";
+  started_at: ISODate | null;
+  finished_at: ISODate | null;
+  remaining_previous: number | null;
+  rotated: number;
+  /** Rows neither key decrypts. */
+  unreadable: number;
+  /** `unreadable` comes from a sample (no previous key configured). */
+  sampled: boolean;
+  error: string | null;
 }
 
 export interface TagStat {

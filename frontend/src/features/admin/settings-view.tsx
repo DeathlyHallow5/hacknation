@@ -19,9 +19,17 @@ import { useCan } from "@/lib/session";
 
 function EncryptionPanel() {
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ["encryption"], queryFn: api.settings.encryption });
+  const q = useQuery({
+    queryKey: ["encryption"],
+    queryFn: api.settings.encryption,
+    // Follow a rotation that continues in the background.
+    refetchInterval: (query) => (query.state.data?.rotation?.state === "rotating" ? 2000 : false),
+  });
   const [confirm, setConfirm] = React.useState(false);
   const e = q.data;
+  // The core reports previous_key_id: null when ASI_DATA_KEY_PREVIOUS is not set (nothing to rotate from).
+  const noPreviousKey = e?.previous_key_id === null;
+  const rotating = e?.rotation?.state === "rotating";
   return (
     <Panel
       title="Szyfrowanie danych w spoczynku"
@@ -44,15 +52,32 @@ function EncryptionPanel() {
                 { label: "Algorytm", value: e.algorithm },
                 { label: "Dostawca klucza", value: e.provider },
                 { label: "Identyfikator klucza", value: <span className="mono">{e.key_id}</span> },
+                ...(e.previous_key_id
+                  ? [
+                      { label: "Poprzedni klucz", value: <span className="mono">{e.previous_key_id}</span> },
+                      {
+                        label: "Pod poprzednim kluczem",
+                        value: e.rows_under_previous_key == null ? "liczenie…" : `${fmtNumber(e.rows_under_previous_key)} wierszy`,
+                      },
+                    ]
+                  : []),
+                ...(e.rotation?.unreadable
+                  ? [{ label: "Nieczytelne", value: `${fmtNumber(e.rotation.unreadable)} wierszy${e.rotation.sampled ? " (w próbce)" : ""} — inny klucz?` }]
+                  : []),
                 { label: "Ostatnia rotacja", value: fmtDate(e.rotated_at) },
                 { label: "Ostatnia weryfikacja", value: fmtRelative(e.last_check_at) },
               ]}
             />
             <Guard permission="settings:manage">
-              <Button className="justify-self-start" onClick={() => setConfirm(true)}>
-                <KeyRound /> Wykonaj rotację klucza
+              <Button className="justify-self-start" onClick={() => setConfirm(true)} disabled={noPreviousKey || rotating}>
+                <KeyRound /> {rotating ? `Rotacja w toku (${fmtNumber(e.rotation?.rotated ?? 0)} wierszy)` : "Wykonaj rotację klucza"}
               </Button>
             </Guard>
+            {noPreviousKey ? (
+              <p className="text-xs text-ink-2 text-pretty">
+                Rotacja: nowy klucz w ASI_DATA_KEY, dotychczasowy w ASI_DATA_KEY_PREVIOUS, ponowne uruchomienie usługi — wtedy ten przycisk zaszyfruje dane nowym kluczem.
+              </p>
+            ) : null}
           </div>
           {/* The list of encrypted columns sits in the panel as a plain table, without a second frame. */}
           <table className="w-full self-start text-sm">
@@ -81,14 +106,15 @@ function EncryptionPanel() {
         onOpenChange={setConfirm}
         destructive={false}
         title="Wykonać rotację klucza?"
-        description="Dane zostaną ponownie zaszyfrowane nowym kluczem. Operacja jest bezpieczna i zostanie zapisana w dzienniku zdarzeń."
+        description="Wiersze zaszyfrowane poprzednim kluczem zostaną ponownie zaszyfrowane bieżącym. Operację można bezpiecznie powtórzyć; zostanie zapisana w dzienniku zdarzeń."
         confirmLabel="Wykonaj rotację"
         onConfirm={async () => {
           setConfirm(false);
           try {
             const r = await api.settings.rotateKey();
             qc.setQueryData(["encryption"], r);
-            toast.success("Wykonano rotację klucza", { description: r.key_id });
+            if (r.rotation?.state === "rotating") toast.info("Rotacja klucza trwa w tle", { description: r.key_id });
+            else toast.success("Wykonano rotację klucza", { description: r.key_id });
           } catch (err) {
             toast.error("Rotacja nie powiodła się", { description: errorMessage(err) });
           }

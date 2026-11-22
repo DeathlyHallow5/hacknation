@@ -30,6 +30,8 @@ services:
       ASI_COOKIE_SECURE: "true"
       ASI_ALLOWED_ORIGINS: https://${ASI_PUBLIC_HOST:?set public hostname}
       ASI_MAX_RUNS: "0"
+      # Only the dashboard may name the client in X-Forwarded-For (its fixed address below).
+      ASI_TRUSTED_PROXIES: 10.231.71.250
     depends_on:
       db: {condition: service_healthy}
     secrets: [database_url, data_key, admin_password]
@@ -40,7 +42,11 @@ services:
     environment:
       ASI_API_MODE: proxy
       ASI_API_URL: http://core:8000
-    networks: [backend, frontend]
+      # The TLS proxy: its X-Forwarded-For names the client (frontend/client-ip.mjs).
+      ASI_TRUSTED_PROXIES: 10.231.72.250
+    networks:
+      backend: {ipv4_address: 10.231.71.250}
+      frontend: {}
   https:
     <<: *hardening
     image: caddy@${ASI_CADDY_DIGEST:?set sha256 digest}
@@ -51,11 +57,15 @@ services:
     tmpfs: [/tmp, /config, /data]
     secrets: [tls_cert, tls_key]
     volumes: [./deploy/Caddyfile:/etc/caddy/Caddyfile:ro]
-    networks: [frontend, edge]
+    networks:
+      frontend: {ipv4_address: 10.231.72.250}
+      edge: {}
 networks:
   database: {internal: true}
-  backend: {internal: true}
-  frontend: {internal: true}
+  # Fixed subnets: the core trusts X-Forwarded-For only from the dashboard's address, the
+  # dashboard only from the TLS proxy's. Automatic addresses come from the lower half.
+  backend: {internal: true, ipam: {config: [{subnet: 10.231.71.0/24, ip_range: 10.231.71.0/25}]}}
+  frontend: {internal: true, ipam: {config: [{subnet: 10.231.72.0/24, ip_range: 10.231.72.0/25}]}}
   edge: {}
 volumes:
   pgdata: {}

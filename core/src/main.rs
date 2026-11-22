@@ -10,6 +10,7 @@ mod engine;
 mod fingerprint;
 mod history;
 mod input;
+mod keyring;
 mod parse;
 mod pipeline;
 mod presence;
@@ -42,8 +43,14 @@ async fn main() -> Result<()> {
         .init();
 
     let config = config::Config::from_env()?;
+    // Each connection carries the previous data key (if any), for asi_decrypt (keyring.rs).
+    let previous_key = config.data_key_previous.clone();
     let db = PgPoolOptions::new()
         .max_connections(16)
+        .after_connect(move |conn, _| {
+            let previous = previous_key.clone();
+            Box::pin(async move { keyring::prepare_connection(conn, previous.as_deref()).await })
+        })
         .connect(&config.database_url)
         .await?;
     sqlx::migrate!("./migrations").run(&db).await?;
@@ -53,6 +60,7 @@ async fn main() -> Result<()> {
 
     let addr = config.bind_addr.clone();
     let state = AppState { db, config: Arc::new(config), limiter: Arc::default() };
+    keyring::start_check(state.clone());
     if state.config.max_runs > 0 {
         tokio::spawn(scheduler::run(state.clone()));
     } else {

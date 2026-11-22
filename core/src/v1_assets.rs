@@ -105,9 +105,9 @@ async fn load(s: &AppState, evidence: bool, host_filter: Option<Uuid>) -> V1<Sta
     let service_ids: Vec<Uuid> = services.iter().map(|x| x.id).collect();
     let http = sqlx::query_as::<_, HttpRow>(
         "SELECT service_id, url, status_code, title, redirects, technologies, cms, favicon_hash, is_admin, is_staging,
-                CASE WHEN $3 THEN pgp_sym_decrypt(headers_enc, $2)::jsonb END AS headers,
-                CASE WHEN $3 THEN pgp_sym_decrypt(cookies_enc, $2)::jsonb END AS cookies,
-                CASE WHEN $3 THEN pgp_sym_decrypt(tls_enc, $2)::jsonb END AS tls
+                CASE WHEN $3 THEN asi_decrypt(headers_enc, $2)::jsonb END AS headers,
+                CASE WHEN $3 THEN asi_decrypt(cookies_enc, $2)::jsonb END AS cookies,
+                CASE WHEN $3 THEN asi_decrypt(tls_enc, $2)::jsonb END AS tls
          FROM http_findings WHERE service_id = ANY($1)",
     )
     .bind(&service_ids)
@@ -596,7 +596,7 @@ pub async fn host_history(State(s): State<AppState>, Path(id): Path<Uuid>) -> V1
     for (run, at, state, ports) in runs {
         type DiffObs = (String, String, Option<String>, Option<String>, Option<String>);
         let diffs: Vec<DiffObs> = sqlx::query_as(
-            "SELECT entity, change::text, field, pgp_sym_decrypt(old_enc, $3), pgp_sym_decrypt(new_enc, $3)
+            "SELECT entity, change::text, field, asi_decrypt(old_enc, $3), asi_decrypt(new_enc, $3)
              FROM diffs WHERE run_b = $1 AND (entity = $2 OR entity LIKE $2 || ':%' OR entity LIKE '%//' || $2 || '%')",
         )
         .bind(run)
@@ -823,7 +823,7 @@ pub async fn update_service(
 /// `POST /api/v1/services/{id}/cookies/{name}/reveal` — the full cookie value (audited).
 pub async fn reveal_cookie(State(s): State<AppState>, Path((id, name)): Path<(Uuid, String)>) -> V1<(Extension<Note>, Json<Value>)> {
     let cookies: Vec<Option<Value>> = sqlx::query_scalar(
-        "SELECT pgp_sym_decrypt(cookies_enc, $2)::jsonb FROM http_findings WHERE service_id = $1",
+        "SELECT asi_decrypt(cookies_enc, $2)::jsonb FROM http_findings WHERE service_id = $1",
     )
     .bind(id)
     .bind(&s.config.data_key)
