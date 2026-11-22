@@ -1123,10 +1123,10 @@ pub struct Finding {
 }
 
 impl Finding {
-    fn effective_score(&self) -> i32 {
+    pub(crate) fn effective_score(&self) -> i32 {
         self.score_override.map_or(self.score, i32::from)
     }
-    fn is_open(&self) -> bool {
+    pub(crate) fn is_open(&self) -> bool {
         !matches!(self.status.as_str(), "false_positive" | "accepted")
     }
 }

@@ -752,6 +752,11 @@ pub async fn dojo_put(
         o.remove("last_test");
     }
     merge(&mut c.cfg, &patch);
+    // The dashboard form has no on/off switch: an address turns the integration on, an empty
+    // one off (an explicit "enabled" in the request still wins).
+    if body.get("enabled").is_none() && body.get("url").is_some() {
+        c.cfg["enabled"] = json!(!c.cfg["url"].as_str().unwrap_or_default().trim().is_empty());
+    }
     let url = c.cfg["url"].as_str().unwrap_or_default();
     if !url.is_empty() && !(url.starts_with("http://") || url.starts_with("https://")) || url.contains(char::is_whitespace) {
         return Err(invalid("Podaj adres URL instancji DefectDojo, np. https://defectdojo.example."));
@@ -786,40 +791,128 @@ fn dojo_client(c: &DojoConfig) -> V1<(reqwest::Client, String, String)> {
     Ok((client, url, token))
 }
 
-/// `POST /api/v1/integrations/defectdojo/test` — token, reachability, product.
+/// Names ASI uses in DefectDojo when the configuration names no product or engagement.
+const DOJO_PRODUCT_TYPE: &str = "ASI";
+const DOJO_PRODUCT: &str = "ASI — CBI AGH";
+const DOJO_ENGAGEMENT: &str = "ASI — skanowanie ciągłe";
+
+/// Base of the links shown in the dashboard. The core may reach DefectDojo under an internal
+/// name (compose.defectdojo.yaml: http://dojo-nginx:8080) the browser cannot open, so
+/// DEFECTDOJO_PUBLIC_URL (e.g. http://localhost:8081) takes precedence.
+fn dojo_link_base(url: &str) -> String {
+    std::env::var("DEFECTDOJO_PUBLIC_URL")
+        .ok()
+        .map(|u| u.trim().trim_end_matches('/').to_string())
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| url.to_string())
+}
+
+async fn dojo_call(req: reqwest::RequestBuilder, token: &str, what: &str) -> Result<Value, String> {
+    let r = req.header("Authorization", format!("Token {token}")).send().await.map_err(|e| format!("{what}: brak połączenia ({e})"))?;
+    let code = r.status();
+    if code == reqwest::StatusCode::UNAUTHORIZED || code == reqwest::StatusCode::FORBIDDEN {
+        return Err(format!("Token odrzucony przez DefectDojo (HTTP {})", code.as_u16()));
+    }
+    if !code.is_success() {
+        let text = r.text().await.unwrap_or_default();
+        return Err(format!("{what}: HTTP {} {}", code.as_u16(), text.chars().take(200).collect::<String>()));
+    }
+    r.json().await.map_err(|e| format!("{what}: niepoprawna odpowiedź ({e})"))
+}
+
+/// First object named `name` from a DefectDojo list endpoint (`?name=` filters, exact match kept).
+async fn dojo_find(client: &reqwest::Client, url: &str, token: &str, path: &str, query: &[(&str, String)], name: &str) -> Result<Option<Value>, String> {
+    let endpoint = reqwest::Url::parse_with_params(&format!("{url}{path}"), query).map_err(|e| format!("{path}: {e}"))?;
+    let list = dojo_call(client.get(endpoint), token, path).await?;
+    Ok(list["results"].as_array().and_then(|r| r.iter().find(|o| o["name"] == json!(name)).cloned()))
+}
+
+/// Product and engagement the exports go to: the configured engagement while it exists, else
+/// found by name or created — product type "ASI", product "ASI — CBI AGH" (or the configured
+/// product name), engagement "ASI — skanowanie ciągłe". The dashboard only shows them.
+async fn dojo_context(client: &reqwest::Client, url: &str, token: &str, cfg: &mut Value) -> Result<(), String> {
+    if let Some(e) = cfg["engagement_id"].as_i64()
+        && let Ok(eng) = dojo_call(client.get(format!("{url}/api/v2/engagements/{e}/")), token, "engagement").await
+    {
+        cfg["engagement_name"] = eng["name"].clone();
+        if let Some(p) = eng["product"].as_i64() {
+            cfg["product_id"] = json!(p);
+            if let Ok(prod) = dojo_call(client.get(format!("{url}/api/v2/products/{p}/")), token, "product").await {
+                cfg["product_name"] = prod["name"].clone();
+            }
+        }
+        return Ok(());
+    }
+    let product_name = cfg["product_name"].as_str().filter(|n| !n.trim().is_empty()).unwrap_or(DOJO_PRODUCT).to_string();
+    let product = match dojo_find(client, url, token, "/api/v2/products/", &[("name", product_name.clone())], &product_name).await? {
+        Some(p) => p,
+        None => {
+            let kind = match dojo_find(client, url, token, "/api/v2/product_types/", &[("name", DOJO_PRODUCT_TYPE.into())], DOJO_PRODUCT_TYPE).await? {
+                Some(t) => t,
+                None => {
+                    let body = json!({ "name": DOJO_PRODUCT_TYPE, "description": "Attack Surface Intelligence (CBI AGH)" });
+                    dojo_call(client.post(format!("{url}/api/v2/product_types/")).json(&body), token, "product type").await?
+                }
+            };
+            let body = json!({
+                "name": product_name, "prod_type": kind["id"],
+                "description": "Zasoby i usługi wykryte przez Attack Surface Intelligence (CBI AGH): panele administracyjne, staging, usługi i zmiany w czasie.",
+            });
+            dojo_call(client.post(format!("{url}/api/v2/products/")).json(&body), token, "product").await?
+        }
+    };
+    let pid = product["id"].as_i64().ok_or("DefectDojo nie zwrócił identyfikatora produktu")?;
+    let query = [("product", pid.to_string()), ("name", DOJO_ENGAGEMENT.to_string())];
+    let engagement = match dojo_find(client, url, token, "/api/v2/engagements/", &query, DOJO_ENGAGEMENT).await? {
+        Some(e) => e,
+        None => {
+            let today = Utc::now().date_naive();
+            let body = json!({
+                "name": DOJO_ENGAGEMENT, "product": pid, "status": "In Progress", "engagement_type": "Interactive",
+                "target_start": today.to_string(), "target_end": (today + chrono::Days::new(365)).to_string(),
+                "description": "Eksport znalezisk ASI: każdy import to osobny test z datą skanu.",
+            });
+            dojo_call(client.post(format!("{url}/api/v2/engagements/")).json(&body), token, "engagement").await?
+        }
+    };
+    cfg["product_id"] = json!(pid);
+    cfg["product_name"] = product["name"].clone();
+    cfg["engagement_id"] = engagement["id"].clone();
+    cfg["engagement_name"] = engagement["name"].clone();
+    Ok(())
+}
+
+/// `POST /api/v1/integrations/defectdojo/test` — reachability and token, then the product and
+/// engagement for exports (found or created, see [`dojo_context`]).
 pub async fn dojo_test(State(s): State<AppState>, Extension(user): Extension<CurrentUser>) -> V1<Json<Value>> {
     let mut c = dojo_config(&s).await?;
     let started = Instant::now();
     let result = match dojo_client(&c) {
         Err((_, Json(e))) => Err(e["error"]["message"].as_str().unwrap_or("Brak konfiguracji").to_string()),
-        Ok((client, url, token)) => {
-            let product = c.cfg["product_id"].as_i64();
-            let path = match product {
-                Some(p) => format!("{url}/api/v2/products/{p}/"),
-                None => format!("{url}/api/v2/users/?limit=1"),
-            };
-            match client.get(&path).header("Authorization", format!("Token {token}")).send().await {
-                Err(e) => Err(format!("Brak połączenia z {url}: {e}")),
-                Ok(r) if r.status().is_success() => {
-                    let body: Value = r.json().await.unwrap_or(Value::Null);
-                    if let Some(name) = body.get("name").and_then(Value::as_str) {
-                        c.cfg["product_name"] = json!(name);
-                    }
-                    Ok(format!("Połączono z {url} — token ważny"))
+        Ok((client, url, token)) => match dojo_call(client.get(format!("{url}/api/v2/users/?limit=1")), &token, &url).await {
+            Err(e) => Err(e),
+            Ok(_) => {
+                let latency = started.elapsed().as_millis() as u64;
+                match dojo_context(&client, &url, &token, &mut c.cfg).await {
+                    Ok(()) => Ok((
+                        format!(
+                            "Połączono z {url} — token ważny. Produkt „{}” (#{}), engagement „{}” (#{}).",
+                            c.cfg["product_name"].as_str().unwrap_or("?"), c.cfg["product_id"],
+                            c.cfg["engagement_name"].as_str().unwrap_or("?"), c.cfg["engagement_id"]
+                        ),
+                        latency,
+                    )),
+                    Err(e) => Err(format!("Token ważny, ale nie udało się przygotować produktu/engagementu: {e}")),
                 }
-                Ok(r) if r.status() == reqwest::StatusCode::UNAUTHORIZED || r.status() == reqwest::StatusCode::FORBIDDEN => {
-                    Err(format!("Token odrzucony (HTTP {})", r.status().as_u16()))
-                }
-                Ok(r) => Err(format!("DefectDojo odpowiedział HTTP {}", r.status().as_u16())),
             }
-        }
+        },
     };
     let ok = result.is_ok();
-    c.cfg["last_test"] = json!({
-        "ok": ok, "at": Utc::now(), "version": null,
-        "latency_ms": ok.then(|| started.elapsed().as_millis() as u64),
-        "message": result.unwrap_or_else(|e| e),
-    });
+    let (message, latency) = match result {
+        Ok((m, l)) => (m, Some(l)),
+        Err(e) => (e, None),
+    };
+    c.cfg["last_test"] = json!({ "ok": ok, "at": Utc::now(), "version": null, "latency_ms": latency, "message": message });
     save_dojo(&s, &c.cfg, None, user.id).await?;
     Ok(Json(dojo_public(&c)))
 }
@@ -828,7 +921,7 @@ pub async fn dojo_test(State(s): State<AppState>, Extension(user): Extension<Cur
 pub async fn dojo_exports(State(s): State<AppState>) -> V1<Json<Vec<Value>>> {
     type Row = (Uuid, DateTime<Utc>, Option<String>, i32, String, String, String);
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT e.id, e.at, COALESCE(u.display_name, u.username), e.count, e.as_kind, e.status, e.message
+        "SELECT e.id, e.at, COALESCE(u.display_name, u.username, 'automatycznie (po skanie)'), e.count, e.as_kind, e.status, e.message
          FROM defectdojo_exports e LEFT JOIN users u ON u.id = e.by_user ORDER BY e.at DESC LIMIT 100",
     )
     .fetch_all(&s.db)
@@ -843,6 +936,15 @@ pub async fn dojo_exports(State(s): State<AppState>) -> V1<Json<Vec<Value>>> {
     ))
 }
 
+#[cfg(test)]
+mod dojo_tests {
+    #[test]
+    fn severity_from_score() {
+        let s: Vec<_> = [95, 80, 79, 60, 59, 40, 39, 0].into_iter().map(super::dojo_severity).collect();
+        assert_eq!(s, ["High", "High", "Medium", "Medium", "Low", "Low", "Info", "Info"]);
+    }
+}
+
 #[derive(Deserialize)]
 pub struct DojoExportBody {
     ids: Vec<Uuid>,
@@ -850,92 +952,143 @@ pub struct DojoExportBody {
     as_kind: Option<String>,
 }
 
-/// `POST /api/v1/findings/defectdojo` — send findings as informational findings with the
-/// "Generic Findings Import" parser (`/api/v2/import-scan/`) into the configured engagement.
-pub async fn dojo_export(
-    State(s): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Json(b): Json<DojoExportBody>,
-) -> V1<(Extension<Note>, Json<Value>)> {
-    if b.ids.is_empty() || b.ids.len() > 500 {
-        return Err(invalid("Wybierz od 1 do 500 znalezisk."));
+/// DefectDojo severity from the ASI score (attack surface, not vulnerabilities: the score says
+/// how much a finding deserves attention). Stated in each finding's description.
+fn dojo_severity(score: i32) -> &'static str {
+    match score {
+        80.. => "High",
+        60..=79 => "Medium",
+        40..=59 => "Low",
+        _ => "Info",
     }
-    let c = dojo_config(&s).await?;
+}
+
+fn dojo_description(f: &crate::v1::Finding) -> String {
+    let evidence: Vec<String> = f.evidence.iter().filter_map(|e| e["snippet"].as_str().map(str::to_string)).collect();
+    format!(
+        "Kategoria: {}\nHost: {}{}\nUsługa: {}\nStatus zmiany: {}\nOcena ASI: {} (ważność w DefectDojo: ≥80 High, ≥60 Medium, ≥40 Low)\nPewność: {:.0}%\n\nDowody:\n- {}",
+        f.category, f.ip, f.hostname.as_deref().map(|h| format!(" ({h})")).unwrap_or_default(),
+        f.service_label.clone().unwrap_or_default(), f.change, f.effective_score(), f.confidence * 100.0, evidence.join("\n- ")
+    )
+}
+
+pub(crate) struct DojoExported {
+    pub export_id: Uuid,
+    pub link: String,
+    pub status: &'static str,
+    pub message: String,
+    pub sent: usize,
+}
+
+/// Send findings to DefectDojo: `finding` — as findings of a new test (Generic Findings Import
+/// via `/api/v2/import-scan/`); `evidence` — one JSON file per finding attached to the
+/// engagement (`/api/v2/engagements/{id}/files/`). Recorded in `defectdojo_exports`; exported
+/// findings are marked in `finding_states.defectdojo`. `by_user` None = automatic export.
+pub(crate) async fn export_findings(
+    s: &AppState,
+    by_user: Option<Uuid>,
+    chosen: &[&crate::v1::Finding],
+    as_kind: &str,
+) -> V1<DojoExported> {
+    let mut c = dojo_config(s).await?;
     if c.cfg["enabled"] != json!(true) {
         return Err(err(StatusCode::CONFLICT, "not_configured", "Integracja z DefectDojo jest wyłączona (Administracja → Integracje)."));
     }
-    let engagement = c.cfg["engagement_id"]
-        .as_i64()
-        .ok_or_else(|| err(StatusCode::CONFLICT, "not_configured", "Podaj identyfikator engagementu DefectDojo."))?;
     let (client, url, token) = dojo_client(&c)?;
-    let as_kind = b.as_kind.unwrap_or_else(|| "finding".into());
-    let all = crate::v1::load_findings(&s.db, &s.config.data_key).await?;
-    let chosen: Vec<&crate::v1::Finding> = all.iter().filter(|f| b.ids.contains(&f.id)).collect();
-    if chosen.is_empty() {
-        return Err(missing());
+    if c.cfg["engagement_id"].as_i64().is_none() {
+        dojo_context(&client, &url, &token, &mut c.cfg)
+            .await
+            .map_err(|e| err(StatusCode::BAD_GATEWAY, "defectdojo_failed", format!("DefectDojo: {e}")))?;
+        save_dojo(s, &c.cfg, None, by_user.unwrap_or_else(Uuid::nil)).await.ok();
     }
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-    let findings: Vec<Value> = chosen
-        .iter()
-        .map(|f| {
-            let evidence: Vec<String> = f.evidence.iter().filter_map(|e| e["snippet"].as_str().map(str::to_string)).collect();
-            json!({
-                "title": f.title,
-                "description": format!(
-                    "Kategoria: {}\nHost: {}{}\nUsługa: {}\nStatus zmiany: {}\nPewność: {:.0}%\n\nDowody:\n- {}",
-                    f.category, f.ip, f.hostname.as_deref().map(|h| format!(" ({h})")).unwrap_or_default(),
-                    f.service_label.clone().unwrap_or_default(), f.change, f.confidence * 100.0, evidence.join("\n- ")
-                ),
-                "severity": "Info",
-                "date": today,
-                "unique_id_from_tool": f.id.to_string(),
-                "vuln_id_from_tool": f.category,
-                "component_name": f.technologies.first(),
-                "endpoints": [match f.port { Some(p) => format!("{}:{p}", f.ip), None => f.ip.clone() }],
-                "tags": ["asi", f.category],
-            })
-        })
-        .collect();
-    let file = serde_json::to_vec(&json!({ "findings": findings })).map_err(fail)?;
-    let form = reqwest::multipart::Form::new()
-        .text("scan_type", "Generic Findings Import")
-        .text("engagement", engagement.to_string())
-        .text("active", "true")
-        .text("verified", "false")
-        .text("minimum_severity", "Info")
-        .text("close_old_findings", "false")
-        .text("test_title", format!("ASI {}", Utc::now().format("%Y-%m-%d %H:%M")))
-        .part("file", reqwest::multipart::Part::bytes(file).file_name("asi-findings.json").mime_str("application/json").map_err(fail)?);
-    let sent = client.post(format!("{url}/api/v2/import-scan/")).header("Authorization", format!("Token {token}")).multipart(form).send().await;
-    let (status, message, test_id) = match sent {
-        Err(e) => ("failed", format!("Brak połączenia z DefectDojo: {e}"), None),
-        Ok(r) if r.status().is_success() => {
-            let body: Value = r.json().await.unwrap_or(Value::Null);
-            let test = body.get("test").and_then(Value::as_i64).or_else(|| body.get("test_id").and_then(Value::as_i64));
-            ("success", format!("Wysłano {} znalezisk do engagementu {engagement}", chosen.len()), test)
+    let engagement = c.cfg["engagement_id"].as_i64().unwrap_or_default();
+    let base = dojo_link_base(&url);
+    let now = Utc::now();
+    let (status, message, link, sent) = if as_kind == "evidence" {
+        let mut sent = 0;
+        let mut last_error = None;
+        for f in chosen {
+            let file = serde_json::to_vec_pretty(&json!({
+                "title": f.title, "category": f.category, "ip": f.ip, "hostname": f.hostname, "port": f.port,
+                "service": f.service_label, "technologies": f.technologies, "change": f.change, "score": f.effective_score(),
+                "confidence": f.confidence, "evidence": f.evidence, "first_seen": f.first_seen, "last_seen": f.last_seen,
+                "asi_finding_id": f.id,
+            }))
+            .map_err(fail)?;
+            let title: String = format!("ASI: {} — {}", f.title, f.ip).chars().take(100).collect();
+            let form = reqwest::multipart::Form::new().text("title", title).part(
+                "file",
+                reqwest::multipart::Part::bytes(file)
+                    .file_name(format!("asi-{}.json", f.id))
+                    .mime_str("application/json")
+                    .map_err(fail)?,
+            );
+            match dojo_call(client.post(format!("{url}/api/v2/engagements/{engagement}/files/")).multipart(form), &token, "evidence").await {
+                Ok(_) => sent += 1,
+                Err(e) => last_error = Some(e),
+            }
         }
-        Ok(r) => {
-            let code = r.status().as_u16();
-            let text = r.text().await.unwrap_or_default();
-            ("failed", format!("DefectDojo odrzucił import (HTTP {code}): {}", text.chars().take(300).collect::<String>()), None)
+        let status = match (sent, chosen.len()) {
+            (0, _) => "failed",
+            (a, b) if a < b => "partial",
+            _ => "success",
+        };
+        let message = match &last_error {
+            None => format!("Dodano {sent} załączników (evidence) do engagementu {engagement}"),
+            Some(e) => format!("Dodano {sent} z {} załączników; ostatni błąd: {e}", chosen.len()),
+        };
+        (status, message, format!("{base}/engagement/{engagement}"), sent)
+    } else {
+        let findings: Vec<Value> = chosen
+            .iter()
+            .map(|f| {
+                json!({
+                    "title": f.title,
+                    "description": dojo_description(f),
+                    "severity": dojo_severity(f.effective_score()),
+                    "date": now.format("%Y-%m-%d").to_string(),
+                    "unique_id_from_tool": f.id.to_string(),
+                    "vuln_id_from_tool": f.category,
+                    "component_name": f.technologies.first(),
+                    "endpoints": [match f.port { Some(p) => format!("{}:{p}", f.ip), None => f.ip.clone() }],
+                    "tags": ["asi", f.category],
+                })
+            })
+            .collect();
+        let file = serde_json::to_vec(&json!({ "findings": findings })).map_err(fail)?;
+        let form = reqwest::multipart::Form::new()
+            .text("scan_type", "Generic Findings Import")
+            .text("engagement", engagement.to_string())
+            .text("active", "true")
+            .text("verified", "false")
+            .text("minimum_severity", "Info")
+            .text("close_old_findings", "false")
+            .text("test_title", format!("ASI {}", now.format("%Y-%m-%d %H:%M")))
+            .part("file", reqwest::multipart::Part::bytes(file).file_name("asi-findings.json").mime_str("application/json").map_err(fail)?);
+        match dojo_call(client.post(format!("{url}/api/v2/import-scan/")).multipart(form), &token, "import-scan").await {
+            Ok(body) => {
+                let test = body.get("test").and_then(Value::as_i64).or_else(|| body.get("test_id").and_then(Value::as_i64));
+                let link = test.map(|t| format!("{base}/test/{t}")).unwrap_or_else(|| format!("{base}/engagement/{engagement}"));
+                ("success", format!("Wysłano {} znalezisk do engagementu {engagement}", chosen.len()), link, chosen.len())
+            }
+            Err(e) => ("failed", format!("DefectDojo odrzucił import: {e}"), format!("{base}/engagement/{engagement}"), 0),
         }
     };
-    let link = test_id.map(|t| format!("{url}/test/{t}")).unwrap_or_else(|| format!("{url}/engagement/{engagement}"));
     let export_id: Uuid = sqlx::query_scalar(
         "INSERT INTO defectdojo_exports (by_user, count, as_kind, status, message, links) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
     )
-    .bind(user.id)
+    .bind(by_user)
     .bind(chosen.len() as i32)
-    .bind(&as_kind)
+    .bind(if as_kind == "evidence" { "evidence" } else { "finding" })
     .bind(status)
     .bind(&message)
     .bind(json!([link]))
     .fetch_one(&s.db)
     .await
     .map_err(fail)?;
-    if status == "success" {
-        for f in &chosen {
-            let mark = json!({ "exported_at": Utc::now(), "finding_id": test_id.unwrap_or(0), "url": link });
+    if status != "failed" {
+        for f in chosen {
+            let mark = json!({ "exported_at": now, "as": as_kind, "url": link });
             sqlx::query(
                 "INSERT INTO finding_states (finding_id, scan_id, category, entity_key, defectdojo, updated_by)
                  VALUES ($1, $2, $3, $4, $5, $6)
@@ -946,26 +1099,83 @@ pub async fn dojo_export(
             .bind(f.category)
             .bind(&f.entity_key)
             .bind(&mark)
-            .bind(user.id)
+            .bind(by_user)
             .execute(&s.db)
             .await
             .map_err(fail)?;
         }
     }
+    Ok(DojoExported { export_id, link, status, message, sent })
+}
+
+/// `POST /api/v1/findings/defectdojo`
+pub async fn dojo_export(
+    State(s): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Json(b): Json<DojoExportBody>,
+) -> V1<(Extension<Note>, Json<Value>)> {
+    if b.ids.is_empty() || b.ids.len() > 500 {
+        return Err(invalid("Wybierz od 1 do 500 znalezisk."));
+    }
+    let all = crate::v1::load_findings(&s.db, &s.config.data_key).await?;
+    let chosen: Vec<&crate::v1::Finding> = all.iter().filter(|f| b.ids.contains(&f.id)).collect();
+    if chosen.is_empty() {
+        return Err(missing());
+    }
+    let as_kind = match b.as_kind.as_deref() {
+        Some("evidence") => "evidence",
+        _ => "finding",
+    };
+    let out = export_findings(&s, Some(user.id), &chosen, as_kind).await?;
+    if out.status == "failed" {
+        return Err(err(StatusCode::BAD_GATEWAY, "defectdojo_failed", out.message));
+    }
     let note = Note {
         action: "finding.defectdojo_export",
         entity: "finding",
-        entity_id: Some(export_id.to_string()),
-        details: json!({ "count": chosen.len(), "status": status }),
+        entity_id: Some(out.export_id.to_string()),
+        details: json!({ "count": chosen.len(), "sent": out.sent, "status": out.status, "as": as_kind }),
     };
-    if status != "success" {
-        return Err(err(StatusCode::BAD_GATEWAY, "defectdojo_failed", message));
-    }
     Ok((
         Extension(note),
         Json(json!({
-            "exported": chosen.len(), "failed": 0, "export_id": export_id,
-            "links": chosen.iter().map(|f| json!({ "finding_id": f.id, "url": link })).collect::<Vec<_>>(),
+            "exported": out.sent, "failed": chosen.len() - out.sent, "export_id": out.export_id,
+            "links": chosen.iter().map(|f| json!({ "finding_id": f.id, "url": out.link })).collect::<Vec<_>>(),
         })),
     ))
+}
+
+/// After a finished run: send its new findings with score ≥ `min_score` when the dashboard's
+/// "automatic export" is on. Findings already exported are skipped; errors are only logged
+/// (and recorded in the export history) — the scan itself is never affected.
+pub(crate) async fn auto_export(s: AppState, run_id: Uuid) {
+    let c = match dojo_config(&s).await {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    if c.cfg["enabled"] != json!(true) || c.cfg["auto_export"] != json!(true) {
+        return;
+    }
+    let min = c.cfg["min_score"].as_i64().unwrap_or(70) as i32;
+    let as_kind = if c.cfg["export_as"] == json!("evidence") { "evidence" } else { "finding" };
+    let scan: Option<Uuid> = match sqlx::query_scalar("SELECT scan_id FROM scan_runs WHERE id = $1").bind(run_id).fetch_optional(&s.db).await {
+        Ok(v) => v,
+        Err(e) => return tracing::warn!(%run_id, "defectdojo auto-export: {e}"),
+    };
+    let all = match crate::v1::load_findings(&s.db, &s.config.data_key).await {
+        Ok(a) => a,
+        Err((_, Json(e))) => return tracing::warn!(%run_id, "defectdojo auto-export: {}", e["error"]["message"]),
+    };
+    let chosen: Vec<&crate::v1::Finding> = all
+        .iter()
+        .filter(|f| Some(f.scan_id) == scan && f.effective_score() >= min && f.is_open() && f.defectdojo.is_none())
+        .take(500)
+        .collect();
+    if chosen.is_empty() {
+        return;
+    }
+    match export_findings(&s, None, &chosen, as_kind).await {
+        Ok(out) => tracing::info!(%run_id, sent = out.sent, status = out.status, "defectdojo auto-export"),
+        Err((_, Json(e))) => tracing::warn!(%run_id, "defectdojo auto-export failed: {}", e["error"]["message"]),
+    }
 }

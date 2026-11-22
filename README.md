@@ -124,6 +124,19 @@ docker compose --profile lab up -d --build
   `compose.production.yaml` и [deploy/SECURITY.md](deploy/SECURITY.md); проверка в изолированной лаборатории —
   [docs/SECURITY-LAB-2026-11-22.md](docs/SECURITY-LAB-2026-11-22.md).
 
+## DefectDojo
+
+Локальная инстанция DefectDojo и подключение к ней одной командой:
+
+```bash
+docker compose -f compose.yaml -f compose.defectdojo.yaml --profile lab --profile dojo up -d
+python scripts/defectdojo/setup.py .env
+```
+
+DefectDojo откроется на http://localhost:8081 (`admin` / `DD_ADMIN_PASSWORD` из `.env`). Продукт и engagement
+ASI создаёт сам; находки уходят автоматически после каждого скана (оценка ≥ 60) или вручную из «Znaleziska» —
+как находки или как файлы-доказательства. Подробности и проверка — [docs/DEFECTDOJO.md](docs/DEFECTDOJO.md).
+
 ## Цифры
 
 | Замер | Результат |
@@ -155,6 +168,7 @@ docker compose --profile lab up -d --build
 | [docs/STATUS.md](docs/STATUS.md) | что работает и что нет |
 | [docs/BENCHMARK.md](docs/BENCHMARK.md) | производительность и рассмотренные альтернативы (RustScan, SYN, `-p-`) |
 | [docs/NOISE.md](docs/NOISE.md) | сколько трафика сканер создаёт у цели и как его сократили |
+| [docs/DEFECTDOJO.md](docs/DEFECTDOJO.md) | локальный DefectDojo, как устроен экспорт и что проверено |
 | [docs/DEMO-VIDEO.md](docs/DEMO-VIDEO.md) | сценарий демо-видео |
 | [HANDOFF.md](HANDOFF.md) | для разработчиков: где остановились и как продолжить |
 
