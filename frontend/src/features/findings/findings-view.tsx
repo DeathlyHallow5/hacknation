@@ -125,6 +125,7 @@ export function FindingsView() {
     <Container className="pb-12">
       <PageHeader
         title="Znaleziska"
+        description="Co warto sprawdzić: panele administracyjne, środowiska testowe, stare wersje oprogramowania. Nadaj status (np. „W analizie”, „Fałszywy alarm”) — zostanie zachowany przy kolejnych skanowaniach."
         actions={
           can("findings:export") ? (
             <DropdownMenu>

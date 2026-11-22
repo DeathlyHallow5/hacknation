@@ -170,7 +170,7 @@ export function UsersView() {
     <Container className="pb-12">
       <PageHeader
         title="Użytkownicy"
-        description="Zmiana roli działa od następnego żądania użytkownika."
+        description="Konta osób korzystających z panelu i ich role. Zmiana roli działa od następnego żądania użytkownika."
         actions={
           <Guard permission="users:manage">
             <Button variant="primary" onClick={() => setNewOpen(true)}>

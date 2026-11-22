@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Crosshair, FileUp, Network, Plus, Radar, Server } from "lucide-react";
 import { useRouter } from "next/navigation";
 import * as React from "react";
-import { ADMIN_NAV, NAV } from "@/components/layout/nav";
+import { ADMIN_NAV, HELP_NAV, NAV } from "@/components/layout/nav";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/overlays";
 import { api } from "@/lib/api/endpoints";
@@ -47,7 +47,7 @@ function PaletteBody({ onOpenChange }: { onOpenChange: (o: boolean) => void }) {
     router.push(href);
   };
   const lower = q.toLowerCase();
-  const pages = [...NAV, ...ADMIN_NAV].filter((i) => can(i.perm) && (!lower || i.label.toLowerCase().includes(lower) || i.description.toLowerCase().includes(lower)));
+  const pages = [...NAV, ...ADMIN_NAV].filter((i) => can(i.perm)).concat([{ ...HELP_NAV, perm: "dashboard:read" }]).filter((i) => !lower || i.label.toLowerCase().includes(lower) || i.description.toLowerCase().includes(lower) || (i.href === HELP_NAV.href && "help jak instrukcja słowniczek".includes(lower)));
   const actions = [
     { label: "Nowe skanowanie", href: "/scans/new", icon: Radar, perm: "scans:create" as const },
     { label: "Dodaj cele (IP, CIDR, domeny)", href: "/targets?add=1", icon: Plus, perm: "targets:create" as const },

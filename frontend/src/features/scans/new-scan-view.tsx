@@ -126,7 +126,11 @@ export function NewScanView() {
 
   return (
     <Container className="pb-12">
-      <PageHeader back={{ href: "/scans", label: "Skanowania" }} title="Nowe skanowanie" />
+      <PageHeader
+        back={{ href: "/scans", label: "Skanowania" }}
+        title="Nowe skanowanie"
+        description="Cztery kroki: wybierz cele, profil, termin i sprawdź podsumowanie. Nic nie zostanie uruchomione przed ostatnim krokiem."
+      />
       <div className="mb-6">
         <Stepper step={step} onStep={go} maxStep={maxStep} />
       </div>
