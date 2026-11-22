@@ -1,125 +1,180 @@
-# hacknation — Attack Surface Intelligence
+# Attack Surface Intelligence
 
-HackNation, задание №3 (AGH). Циклическое discovery-сканирование больших сетей (>10 000 IP)
-с детектом изменений во времени, кастомными сигнатурами, RBAC, шифрованием и интеграцией с DefectDojo.
+**Видеть свою сеть так, как её видит атакующий — и замечать, что в ней изменилось.**
 
-**Полная спецификация и «зачем всё это» — [PROJECT.md](PROJECT.md).**
+*System cyklicznego skanowania dużych sieci z wykrywaniem zmian w czasie — HackNation 2026, zadanie №3, CBI AGH.*
 
-## Структура монорепо
+ASI по расписанию обходит большие сети (десятки тысяч адресов), безопасно и с ограничением темпа находит
+живые хосты, открытые порты, сервисы и веб-приложения, распознаёт технологии — и после каждого прогона
+показывает **разницу с прошлым разом**: что появилось, что пропало, что поменяло версию и какие хосты
+«мигают». Аналитик работает в веб-панели на польском языке: правит данные, ставит статусы находкам,
+запускает сканы, пишет свои сигнатуры, выгружает результаты в DefectDojo.
 
-| Путь | Что | Ответственный |
-|------|-----|---------------|
-| `core/` | Rust (axum + tokio + sqlx): API и оркестратор скана | A (ядро), B (данные/diff) |
-| `core/migrations/` | Схема PostgreSQL (pgcrypto, RBAC-роли, diffs, audit) | B |
-| `frontend/` | Next.js дашборд (контракт `/api/v1`, режимы `proxy`/`mock`) | C |
-| `web/` | старый UI из SWOT — compose его больше не использует | — |
-| `tools/` | Пиннутые версии ProjectDiscovery + установщик с проверкой SHA-256 | A |
-| `compose.yaml` | db + core + web (`frontend/`), профиль `lab` — тестовые сервисы для демо | все |
-| `docs/STATUS.md` | **что сейчас работает, а что нет** | все |
-| `docs/DEMO-VIDEO.md` | сценарий демо-видео | все |
-| `docs/API-CONTRACT.md` | контракт фронт ↔ бэкенд (`/api/v1`): каждый эндпоинт, права, SSE, форматы | C |
+---
 
-## Запуск
+## Что умеет
+
+| | |
+|---|---|
+| **Цели** | IP, CIDR, домены; вручную или импорт CSV/JSON; владелец, критичность, теги, исключения |
+| **Безопасный скан** | сканер трогает только сети и порты, одобренные администратором; общий лимит запросов/с; аварийная остановка одним файлом; деление сети на подгруппы с адаптивным размером, оценка времени до запуска, окна по часам и дням недели (вне окна — пауза и продолжение с того же места), честный User-Agent, никаких эксплойтов; у ядра нет выхода в интернет |
+| **Что находит** | живые хосты, порты, сервисы и версии (`nmap -sV`), для веба — заголовок, код ответа, заголовки, cookie, TLS, редиректы, favicon, технологии; CMS, фреймворки, панели администрирования, staging, IoT |
+| **Изменения во времени** | новые / пропавшие / изменённые хосты и сервисы, повторная проверка перед «пропал», нестабильные хосты, оценка «интересности» каждого изменения, карта доступности по часам |
+| **Свои сигнатуры** | правила по заголовкам, cookie, title, favicon, баннерам — только обнаружение, с проверкой на тестовых данных и импортом/экспортом |
+| **Правки аналитика** | владелец, критичность, теги, заметки, статусы находок — **сохраняются при следующих сканах**, с историей правок |
+| **Роли (RBAC)** | 4 встроенные роли из задания + **свои роли** из 41 права; проверка на сервере по каждому запросу, журнал аудита |
+| **Защита данных** | баннеры, заголовки, cookie, заметки и сырые выводы сканеров зашифрованы в PostgreSQL (`pgcrypto`), сессии — HttpOnly-cookie + CSRF, пароли — Argon2 |
+| **Импорт / экспорт** | цели и результаты в JSON/CSV, импорт результатов nmap XML, экспорт в **DefectDojo** |
+
+## Как это работает
+
+```mermaid
+flowchart LR
+    UI["Панель (Next.js)<br/>localhost:3000"] -- "/api/v1 (proxy)" --> CORE["Ядро (Rust, axum)"]
+    CORE --> DB[("PostgreSQL<br/>pgcrypto")]
+    CORE --> SCHED["Планировщик<br/>окна, паузы, чекпоинты"]
+    SCHED --> P1["1. pre-flight<br/>nmap -sn"] --> P2["2. порты<br/>naabu"] --> P3["3. сервисы<br/>nmap -sV"] --> P4["4. веб<br/>httpx"] --> P5["5. сигнатуры<br/>и diff"]
+    P5 --> DB
+    CORE -. "экспорт" .-> DD["DefectDojo"]
+```
+
+Каждый прогон делит сеть на подгруппы и подбирает их размер по измеренной скорости; прогресс идёт в панель
+в реальном времени (SSE). После прогона ядро сравнивает результат с предыдущим, перепроверяет пропавшее и
+пересчитывает сигнатуры.
+
+## Быстрый старт
+
+Нужен только **Docker** (Docker Desktop на Windows/macOS или Docker Engine + Compose на Linux), ~4 ГБ RAM.
+
+**1. Настройки** — создайте `.env` с ключом шифрования и паролем первого администратора.
+
+Windows (PowerShell):
+
+```powershell
+Copy-Item .env.example .env
+function New-Secret($n) { $b = New-Object byte[] $n; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b) }
+(Get-Content .env) -replace '^ASI_DATA_KEY=.*', "ASI_DATA_KEY=$(New-Secret 32)" -replace '^ASI_ADMIN_PASSWORD=.*', "ASI_ADMIN_PASSWORD=$(New-Secret 18)" | Set-Content .env -Encoding ascii
+```
+
+Linux / macOS:
 
 ```bash
 cp .env.example .env
 sed -i "s|^ASI_DATA_KEY=.*|ASI_DATA_KEY=$(openssl rand -base64 32)|" .env
-sed -i "s|^ASI_ADMIN_PASSWORD=.*|ASI_ADMIN_PASSWORD=$(openssl rand -base64 18)|" .env   # первый админ
-docker compose up --build -d                 # db + core + web
-docker compose --profile lab up -d           # + тестовая лаба 172.30.0.0/24
+sed -i "s|^ASI_ADMIN_PASSWORD=.*|ASI_ADMIN_PASSWORD=$(openssl rand -base64 18)|" .env
 ```
 
-- Дашборд: http://localhost:3000 — вход `admin` / `ASI_ADMIN_PASSWORD` из `.env`.
-- API для дашборда: `/api/v1/...` (контракт — `frontend/src/lib/api/types.ts`, реализация — `core/src/v1.rs`).
-- API ядра (http://localhost:8000/api) — **всё, кроме `/health` и `/auth/login`, требует входа**
-  (`POST /api/auth/login` → `Authorization: Bearer <token>`; скрипты в `scripts/` входят сами через `scripts/_auth.sh`):
+По умолчанию сканировать можно только лабу `172.30.0.0/24` и 8 портов (22, 80, 443, 3306, 5432, 6379, 8080, 8443).
+Свои сети и порты — переменные `ASI_ALLOWED_CIDRS` и `ASI_ALLOWED_PORTS` в `.env` (см. `.env.example`).
 
-| Метод | Путь | Что |
-|-------|------|-----|
-| GET | `/health`, `/tools` | состояние, установленные сканеры |
-| GET/POST | `/targets` | список / импорт целей (текст, CSV: первая колонка) |
-| GET/POST | `/scans` | список / создание скана (цели + rate, окно, повтор, порты, батч) |
-| POST | `/scans/{id}/run` | запустить скан сейчас (новый прогон) |
-| GET | `/scans/{id}/runs` | прогоны скана |
-| GET | `/runs/{id}` | статус, прогресс, ETA, статистика |
-| GET | `/runs/{id}/findings` | хосты (state, miss_count, flaps, first/last seen) → сервисы → HTTP-находки (расшифрованы) |
-| GET | `/runs/{id}/diff` | изменения vs предыдущий прогон: new/gone/changed, confidence, interest 1–3 (`?against=<run_id>` — с любым прогоном) |
-| POST | `/runs/{id}/cancel` | остановить прогон |
-| POST/GET | `/auth/login`, `/auth/logout`, `/auth/me` | сессии (cookie HttpOnly или Bearer; для записи по cookie — заголовок `X-ASI-CSRF: 1`) |
-| GET/POST/PATCH/DELETE | `/users`, `/users/{id}` | пользователи и роли (admin) |
-| GET | `/audit` | журнал аудита |
-| GET/PATCH/DELETE | `/scans/{id}`, `/targets/{id}` | правка и удаление |
-| GET/PUT/DELETE | `/scans/{id}/annotations…` | правки аналитика, переживающие пересканирование |
-
-### Демо на лабе
+**2. Запуск** — база, ядро, панель и тестовая лаба:
 
 ```bash
-scripts/diff-demo.sh        # 4 прогона с изменениями лабы + сравнение любых двух (~2.5 мин)
+docker compose --profile lab up -d --build
 ```
 
-Вручную:
+Первая сборка занимает 5–10 минут. Если Docker Hub отвечает `429 Too Many Requests`, соберите через зеркало:
+`ASI_BASE_REGISTRY=mirror.gcr.io/library docker compose --profile lab up -d --build`.
+
+**3. Вход** — откройте **http://localhost:3000**, логин `admin`, пароль — `ASI_ADMIN_PASSWORD` из `.env`.
+
+Остановить: `docker compose --profile lab --profile lab2 down` (данные остаются в томе `asi_db-data`).
+
+## Проверка на лабе через веб-интерфейс
+
+Лаба — изолированная Docker-сеть `172.30.0.0/24` без выхода наружу: nginx на `.10`, Apache на `.11`.
+Сканировать чужие сети без разрешения нельзя — для проверки достаточно лабы.
+
+1. **Zakresy → Dodaj zakres** — добавьте `172.30.0.0/28` (имя, например, «Lab /28»).
+2. **Skanowania → Nowe skanowanie** — отметьте цель, профиль **Laboratorium** (порты, одобренные
+   администратором), термин **Teraz**, затем **Uruchom skanowanie**. Откроется страница скана с прогрессом и
+   журналом в реальном времени; прогон /28 идёт около 15 секунд. Профили с top-100/top-1000 портов
+   сканер отклонит с объяснением, пока эти порты не одобрены в `ASI_ALLOWED_PORTS`.
+3. **Pulpit, Zasoby, Znaleziska** — найденные хосты, сервисы с версиями, веб-отпечатки.
+4. **Измените инфраструктуру** — выключите Apache и поднимите новый хост с «админкой на staging»:
+
+   ```bash
+   docker compose --profile lab stop lab-httpd
+   docker compose --profile lab2 up -d lab-admin
+   ```
+
+5. Запустите новый скан с той же целью и профилем (как в шаге 2) — ядро сравнит его с прошлым прогоном
+   по тем же целям. **Zmiany** покажет новый хост `.12` с панелью администратора (высокая «интересность»)
+   и пропавший Apache — сначала как нестабильный, после следующих прогонов как неактивный.
+6. Дополнительно: поправьте владельца или теги хоста и пересканируйте — правка останется; создайте
+   свою роль в **Administracja → Role** и войдите пользователем с ней; выгрузите результаты в JSON/CSV.
+
+Вернуть лабу в исходное состояние: `docker compose --profile lab start lab-httpd` и
+`docker compose --profile lab2 stop lab-admin`.
+
+## Границы сканирования и остановка
+
+- **Что можно сканировать** решает администратор сервера, а не пользователь панели: `ASI_ALLOWED_CIDRS`
+  (IPv4-сети), `ASI_ALLOWED_PORTS` (порты), `ASI_EXCLUDED_CIDRS` (исключения сильнее разрешений).
+  Цель вне разрешённого или порт вне списка — отказ ещё до запуска; служебные сети (loopback, link-local,
+  multicast) запрещены всегда.
+- **Общий лимит** `ASI_GLOBAL_PPS` делится между всеми одновременными прогонами (`ASI_MAX_RUNS`).
+- **Аварийная остановка**: создайте файл `deploy/control/STOP` — запущенные сканеры прерываются, новые
+  не стартуют, пока файл не удалят.
+- Ядро и база живут во внутренних сетях Docker без выхода наружу; наружу опубликован только порт панели.
+  Скриптам из `scripts/`, которым нужен API ядра на `127.0.0.1:8000`, — оверрайд
+  `docker compose -f compose.yaml -f compose.api.yaml --profile lab up -d` (только для разработки).
+- Шаблон для боевого развёртывания (HTTPS-прокси, секреты из файлов, образы по digest) —
+  `compose.production.yaml` и [deploy/SECURITY.md](deploy/SECURITY.md); проверка в изолированной лаборатории —
+  [docs/SECURITY-LAB-2026-11-22.md](docs/SECURITY-LAB-2026-11-22.md).
+
+## Цифры
+
+| Замер | Результат |
+|---|---|
+| Сеть /18 (16 382 адреса, 160 живых хостов), 8 портов, 1000 запросов/с | **7 мин 56 с**, найдено 160/160 хостов, 160/160 сервисов с версией, 140/140 веб-отпечатков |
+| Лаба /24, top-100 портов при 100 запросах/с | 280 с |
+| Лаба /28, профиль Laboratorium (8 портов) | 12–18 с |
+| Шум у цели после чистки | 3 HTTP-запроса на веб-сервер, 0 «эксплойтных» путей, 0 соединений с интернетом |
+
+Подробности и журнал всех замеров — [docs/BENCHMARK.md](docs/BENCHMARK.md), [docs/benchmarks/](docs/benchmarks/),
+[docs/NOISE.md](docs/NOISE.md).
+
+## Стек
+
+| Часть | Технологии |
+|---|---|
+| Ядро | Rust: axum, tokio, sqlx; Argon2, SHA-256 сессии |
+| Сканеры | nmap, naabu, httpx (ProjectDiscovery; версии закреплены, SHA-256 проверяется при сборке) |
+| Данные | PostgreSQL 17 + pgcrypto |
+| Панель | Next.js 16, React 19, TypeScript, Tailwind CSS 4, TanStack Query |
+| Запуск | Docker Compose; контейнер ядра без root и без capabilities |
+
+## Документация
+
+| Документ | О чём |
+|---|---|
+| [PROJECT.md](PROJECT.md) | полная спецификация, модель угроз, правила diff |
+| [docs/API-CONTRACT.md](docs/API-CONTRACT.md) | контракт панели и ядра (`/api/v1`): эндпоинты, права, SSE, форматы, дизайн-система |
+| [docs/STATUS.md](docs/STATUS.md) | что работает и что нет |
+| [docs/BENCHMARK.md](docs/BENCHMARK.md) | производительность и рассмотренные альтернативы (RustScan, SYN, `-p-`) |
+| [docs/NOISE.md](docs/NOISE.md) | сколько трафика сканер создаёт у цели и как его сократили |
+| [docs/DEMO-VIDEO.md](docs/DEMO-VIDEO.md) | сценарий демо-видео |
+| [HANDOFF.md](HANDOFF.md) | для разработчиков: где остановились и как продолжить |
+
+## Разработка
 
 ```bash
-docker compose --profile lab up -d
-scripts/lab-scan.sh demo                                  # прогон 1: nginx .10, Apache .11
-docker compose --profile lab stop lab-httpd               # "изменение инфраструктуры"
-docker compose --profile lab2 up -d lab-admin             # новый хост: админка на staging (.12)
-curl -XPOST localhost:8000/api/scans/<scan_id>/run        # прогон 2 того же скана
-# окно с паузой/возобновлением:
-scripts/lab-scan.sh "window" '"window_minutes":1,"repeat_every_minutes":2,"batch_size":4,"rate_limit_pps":5'
+docker compose up -d db                       # только база
+cd core && cargo test                         # тесты ядра
+cd frontend && npm ci && npm run dev          # панель на встроенных демо-данных (ASI_API_MODE=mock)
 ```
 
-Пример создания скана:
+Скрипты `scripts/*.sh` и бенчмарк ходят в API ядра напрямую — поднимайте стек с `compose.api.yaml`
+(см. выше), а для бенчмарка добавьте его сеть в `ASI_ALLOWED_CIDRS`.
 
-```bash
-curl -s localhost:8000/api/scans -H 'Content-Type: application/json' -d '{
-  "name": "uczelnia", "targets": "10.0.0.0/20\nexample.com",
-  "rate_limit_pps": 200, "window_minutes": 120, "repeat_every_minutes": 1440,
-  "ports": "100", "batch_size": 256 }'
-```
+Панель умеет работать без ядра (`ASI_API_MODE=mock`), с ядром (`proxy`, так в Docker) или смешанно (`hybrid`) —
+см. [docs/API-CONTRACT.md](docs/API-CONTRACT.md). Скрипты для лабы без панели — `scripts/lab-scan.sh`,
+`scripts/diff-demo.sh`; бенчмарк — `scripts/bench/`.
 
-## Разработка без Docker
-
-```bash
-docker compose up -d db
-cd core && DATABASE_URL=postgres://asi:asi-dev-password@localhost:5432/asi ASI_DATA_KEY=dev cargo run
-cd core && cargo test
-cd web && npm ci && ASI_API_INTERNAL_URL=http://127.0.0.1:8000 npm run dev
-```
-
-(для локального `cargo run` пробросьте порт Postgres: `ports: ["127.0.0.1:5432:5432"]` в `db`).
-
-## Ветки
-
-- `dev` — вся работа.
-- `main` — только по команде владельца репозитория.
-
-## Статус
-
-**Пайплайн A (скан) — готов, проверен на лабе:** pre-flight (`nmap -sn`) → порты (`naabu`, connect) →
-сервисы (`nmap -sV`) → HTTP/HTTPS (`httpx`: title, код, заголовки, cookie, TLS, редиректы, технологии) →
-CMS/админка/staging → Postgres (чувствительные поля и сырые выводы зашифрованы `pgp_sym_encrypt`).
-Планировщик: повтор каждые N минут, временные окна с паузой и продолжением с чекпоинта,
-адаптивный размер батча по измеренной скорости, ETA, восстановление после рестарта, отмена.
-
-**Diff Engine — готов, проверен на лабе (`scripts/diff-demo.sh`):** сравнение с предыдущим прогоном
-в конце каждого прогона, повторная проверка пропавших хостов/портов, статусы unstable → inactive
-по порогу `inactive_after_misses`, учёт «миганий», confidence и interest у каждого изменения,
-значения в диффах зашифрованы. Правила — PROJECT.md §9.
-
-**Где остановились и как продолжить (в т.ч. на другом ПК)** — [HANDOFF.md](HANDOFF.md).
-
-**Известные проблемы и план** — PROJECT.md §15 (реестр находок) и §17 (дорожная карта).
-До закрытия гейтов SEC/SCOPE не запускать вне изолированной лабы и не открывать API в сеть.
-
-**Авторизация, 4 роли RBAC, аудит, правки аналитика — готовы, проверены на лабе.** Дашборд (`frontend/`)
-подключён к ядру: вход, Pulpit и Zakresy работают на реальных данных.
-
-**Подробный и актуальный список «работает / не работает» — [docs/STATUS.md](docs/STATUS.md).**
-Дальше: страницы сканов/находок/изменений во фронте, запуск сканов из UI, кастомные сигнатуры,
-окна по часам, DefectDojo, бенчмарк 10k IP.
+Работа ведётся в ветке `dev`; `main` — стабильная версия.
 
 ## Лицензия
 
-GPL-3.0 — фронтенд и установщик инструментов взяты из [SWOT](https://github.com/VHJ5TmV0/SWOT) (GPL-3.0),
+GPL-3.0 — установщик инструментов взят из [SWOT](https://github.com/VHJ5TmV0/SWOT) (GPL-3.0),
 поэтому проект целиком распространяется под GPL-3.0.

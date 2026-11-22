@@ -88,8 +88,7 @@ pub async fn run_bin(bin: &Path, name: &str, args: &[&str], timeout: Duration) -
 /// Max stdout kept from one tool invocation. Hostile banners or a runaway tool must not
 /// exhaust memory: past this the tool is killed and the batch fails (F-10).
 pub const MAX_STDOUT: u64 = 64 * 1024 * 1024;
-/// Stderr is only used for error messages.
-const MAX_STDERR: u64 = 16 * 1024;
+
 
 /// Run a tool with a hard timeout and return stdout. The child is killed on timeout
 /// so a stuck scanner cannot outlive its scan window (§3.2).
@@ -102,6 +101,9 @@ pub async fn run(tools_dir: &str, tool: Tool, args: &[&str], timeout: Duration) 
 
 async fn run_path(bin: &Path, name: &str, args: &[&str], timeout: Duration, max_stdout: u64) -> Result<String> {
     use tokio::io::AsyncReadExt;
+    let stop_file = std::env::var_os("ASI_STOP_FILE").map(PathBuf::from);
+    let stopped = || stop_file.as_ref().is_some_and(|p| p.try_exists().unwrap_or(true));
+    anyhow::ensure!(!stopped(), "scanner stopped by administrator");
     let mut child = Command::new(bin)
         .args(args)
         .stdin(Stdio::null())
@@ -121,23 +123,25 @@ async fn run_path(bin: &Path, name: &str, args: &[&str], timeout: Duration, max_
             }
             Ok(buf)
         };
-        let read_err = async {
-            let mut buf = Vec::new();
-            (&mut stderr).take(MAX_STDERR).read_to_end(&mut buf).await?;
-            // Drain the rest so the child never blocks on a full stderr pipe.
-            tokio::io::copy(&mut stderr, &mut tokio::io::sink()).await?;
-            Ok::<_, anyhow::Error>(buf)
-        };
-        // try_join: an oversized stdout returns at once; dropping `child` kills it.
-        let (out, err) = tokio::try_join!(read_out, read_err)?;
+        let mut sink = tokio::io::sink();
+        let drain_err = tokio::io::copy(&mut stderr, &mut sink);
+        let (out, _) = tokio::try_join!(read_out, async { Ok::<_, anyhow::Error>(drain_err.await?) })?;
         let status = child.wait().await?;
-        Ok::<_, anyhow::Error>((status, out, err))
+        Ok::<_, anyhow::Error>((status, out))
     };
-    let (status, out, err) = tokio::time::timeout(timeout, work)
-        .await
-        .with_context(|| format!("{name} timed out after {timeout:?}"))??;
+    let stop = async {
+        if stop_file.is_none() { std::future::pending::<()>().await; }
+        loop {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if stopped() { break; }
+        }
+    };
+    let (status, out) = tokio::select! {
+        result = tokio::time::timeout(timeout, work) => result.with_context(|| format!("{name} timed out"))??,
+        () = stop => bail!("scanner stopped by administrator"),
+    };
     if !status.success() {
-        bail!("{name} exited with {status}: {}", String::from_utf8_lossy(&err).trim());
+        bail!("{name} exited with {status}");
     }
     Ok(String::from_utf8_lossy(&out).into_owned())
 }
@@ -176,6 +180,6 @@ mod tests {
         let out = run_path(sh, "sh", &["-c", "echo ok"], Duration::from_secs(5), 1024).await.unwrap();
         assert_eq!(out, "ok\n");
         let err = run_path(sh, "sh", &["-c", "echo boom >&2; exit 3"], Duration::from_secs(5), 1024).await.unwrap_err();
-        assert!(err.to_string().contains("boom"), "{err}");
+        assert!(!err.to_string().contains("boom"), "{err}");
     }
 }

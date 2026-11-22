@@ -151,11 +151,24 @@ impl HttpxRecord {
 
     /// Raw `Set-Cookie` values (httpx lowercases and underscores header names).
     pub fn cookies(&self) -> Vec<String> {
-        match self.header.get("set_cookie") {
+        let values = match self.header.get("set_cookie") {
             Some(Value::String(s)) => vec![s.clone()],
             Some(Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
             _ => Vec::new(),
-        }
+        };
+        values.iter().filter_map(|value| {
+            let mut fields = value.split(';');
+            let (name, _) = fields.next()?.split_once('=')?;
+            let name = name.trim();
+            if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b"_-.".contains(&b)) { return None; }
+            let mut safe = format!("{name}=");
+            for attr in fields.map(str::trim) {
+                if ["secure", "httponly", "samesite=strict", "samesite=lax", "samesite=none"].iter().any(|s| attr.eq_ignore_ascii_case(s)) {
+                    safe.push_str("; "); safe.push_str(attr);
+                }
+            }
+            Some(safe)
+        }).collect()
     }
 
     /// Redirect hops: chain locations, then the top-level location / final URL.
@@ -211,6 +224,14 @@ mod tests {
         let n = naabu(include_str!("../fixtures/naabu.jsonl"));
         assert_eq!(n.len(), 3);
         assert_eq!(n["172.30.0.2"].ports, BTreeSet::from([8000]));
+    }
+
+    #[test]
+    fn cookie_evidence_omits_secret_values() {
+        let r: HttpxRecord = serde_json::from_value(serde_json::json!({"header": {
+            "set_cookie": ["session=SECRET; Path=/SECRET; Secure; HttpOnly; SameSite=Lax"]
+        }})).unwrap();
+        assert_eq!(r.cookies(), ["session=; Secure; HttpOnly; SameSite=Lax"]);
     }
 
     #[test]

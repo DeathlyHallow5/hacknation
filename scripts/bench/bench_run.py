@@ -5,7 +5,8 @@ import http.cookiejar, json, os, subprocess, sys, time, urllib.error, urllib.req
 
 env_path, plan_path, label, ports, rate, prefix = sys.argv[1:7]
 ENV = dict(l.strip().split("=", 1) for l in open(env_path, encoding="utf-8") if "=" in l and not l.startswith("#"))
-BASE = (sys.argv[7] if len(sys.argv) > 7 else "http://127.0.0.1:8000") + "/api/v1"
+BASE = (sys.argv[7] if len(sys.argv) > 7 else "http://127.0.0.1:3000") + "/api/v1"
+ORIGIN = "http://localhost:3000"
 
 
 class Api:
@@ -24,6 +25,7 @@ class Api:
             data, h["Content-Type"] = json.dumps(body).encode(), "application/json"
         if method != "GET":
             h["X-ASI-CSRF"] = "1"
+            h["Origin"] = ORIGIN  # the core checks it with the CSRF header (ASI_ALLOWED_ORIGINS)
         req = urllib.request.Request(BASE + path, data=data, method=method, headers=h)
         try:
             with self.op.open(req, timeout=timeout) as r:

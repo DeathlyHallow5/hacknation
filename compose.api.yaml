@@ -1,0 +1,10 @@
+# Opt-in host access to the core API on 127.0.0.1:8000 for the scripts in scripts/ (lab-scan.sh,
+# diff-demo.sh, bench/):
+#   docker compose -f compose.yaml -f compose.api.yaml --profile lab up -d
+# Publishing a port needs a non-internal network, so this also gives the core outbound access
+# (the scanner itself stays limited by ASI_ALLOWED_CIDRS / ASI_ALLOWED_PORTS). Development only.
+services:
+  core:
+    ports:
+      - "127.0.0.1:${ASI_API_PORT:-8000}:8000"
+    networks: [default, lab, edge]

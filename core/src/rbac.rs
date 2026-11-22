@@ -135,6 +135,7 @@ pub const ROUTES: &[(&str, &str, Rule)] = &[
     ("GET", "/api/v1/dashboard/technologies", Requires(Read)),
     ("GET", "/api/v1/dashboard/address-map", Requires(Read)),
     ("GET", "/api/v1/search", Requires(Read)),
+    ("GET", "/api/v1/tags", Authenticated),
     ("GET", "/api/v1/targets", Requires(Read)),
     ("POST", "/api/v1/targets", Requires(Create)),
     ("GET", "/api/v1/targets/export", Requires(Read)),
@@ -182,6 +183,7 @@ pub const ROUTES: &[(&str, &str, Rule)] = &[
     ("PATCH", "/api/v1/users/{id}", Requires(ManageUsers)),
     ("DELETE", "/api/v1/users/{id}", Requires(ManageUsers)),
     ("GET", "/api/v1/roles", Requires(ManageUsers)),
+    ("GET", "/api/v1/permissions", Requires(ManageUsers)),
     ("POST", "/api/v1/roles", Requires(ManageUsers)),
     ("PATCH", "/api/v1/roles/{id}", Requires(ManageUsers)),
     ("DELETE", "/api/v1/roles/{id}", Requires(ManageUsers)),
@@ -209,6 +211,131 @@ pub const ROUTES: &[(&str, &str, Rule)] = &[
     ("PATCH", "/api/v1/signatures/{id}", Requires(Update)),
     ("DELETE", "/api/v1/signatures/{id}", Requires(Delete)),
 ];
+
+/// Dashboard permissions (frontend/src/lib/api/types.ts `PERMISSIONS`), the vocabulary of
+/// custom roles. Same order as the frontend.
+pub const PERMISSIONS: [&str; 41] = [
+    "dashboard:read", "targets:read", "targets:create", "targets:update", "targets:delete",
+    "targets:import", "targets:export", "scans:read", "scans:create", "scans:update",
+    "scans:delete", "scans:control", "scans:import", "scans:export", "schedules:read",
+    "schedules:create", "schedules:update", "schedules:delete", "assets:read", "assets:update",
+    "assets:recheck", "findings:read", "findings:update", "findings:export", "findings:defectdojo",
+    "changes:read", "signatures:read", "signatures:create", "signatures:update", "signatures:delete",
+    "signatures:test", "sensitive:reveal", "users:read", "users:manage", "roles:read",
+    "roles:manage", "integrations:read", "integrations:manage", "audit:read", "settings:read",
+    "settings:manage",
+];
+
+/// Permission a custom role needs for each `/api/v1` route (the dashboard contract's endpoint
+/// list). Built-in roles keep the action matrix of [`Role::can`].
+pub const V1_PERMS: &[(&str, &str, &str)] = &[
+    ("GET", "/api/v1/dashboard/summary", "dashboard:read"),
+    ("GET", "/api/v1/dashboard/top-findings", "findings:read"),
+    ("GET", "/api/v1/dashboard/changes-timeline", "changes:read"),
+    ("GET", "/api/v1/dashboard/availability", "changes:read"),
+    ("GET", "/api/v1/dashboard/technologies", "assets:read"),
+    ("GET", "/api/v1/dashboard/address-map", "assets:read"),
+    ("GET", "/api/v1/search", "dashboard:read"),
+    ("GET", "/api/v1/targets", "targets:read"),
+    ("POST", "/api/v1/targets", "targets:create"),
+    ("GET", "/api/v1/targets/{id}", "targets:read"),
+    ("PATCH", "/api/v1/targets/{id}", "targets:update"),
+    ("DELETE", "/api/v1/targets/{id}", "targets:delete"),
+    ("POST", "/api/v1/targets/bulk", "targets:update"),
+    ("POST", "/api/v1/targets/import", "targets:import"),
+    ("GET", "/api/v1/targets/export", "targets:export"),
+    ("GET", "/api/v1/scans", "scans:read"),
+    ("POST", "/api/v1/scans", "scans:create"),
+    ("POST", "/api/v1/scans/estimate", "scans:read"),
+    ("POST", "/api/v1/scans/import", "scans:import"),
+    ("GET", "/api/v1/scans/{id}", "scans:read"),
+    ("PATCH", "/api/v1/scans/{id}", "scans:update"),
+    ("DELETE", "/api/v1/scans/{id}", "scans:delete"),
+    ("POST", "/api/v1/scans/{id}/{action}", "scans:control"),
+    ("GET", "/api/v1/scans/{id}/batches", "scans:read"),
+    ("GET", "/api/v1/scans/{id}/logs", "scans:read"),
+    ("GET", "/api/v1/scans/{id}/events", "scans:read"),
+    ("GET", "/api/v1/scans/{id}/export", "scans:export"),
+    ("GET", "/api/v1/profiles", "scans:read"),
+    ("POST", "/api/v1/profiles", "scans:create"),
+    ("PATCH", "/api/v1/profiles/{id}", "scans:update"),
+    ("DELETE", "/api/v1/profiles/{id}", "scans:delete"),
+    ("GET", "/api/v1/schedules", "schedules:read"),
+    ("POST", "/api/v1/schedules", "schedules:create"),
+    ("PATCH", "/api/v1/schedules/{id}", "schedules:update"),
+    ("DELETE", "/api/v1/schedules/{id}", "schedules:delete"),
+    ("GET", "/api/v1/hosts", "assets:read"),
+    ("GET", "/api/v1/hosts/unstable", "changes:read"),
+    ("GET", "/api/v1/hosts/{id}", "assets:read"),
+    ("PATCH", "/api/v1/hosts/{id}", "assets:update"),
+    ("DELETE", "/api/v1/hosts/{id}/overrides/{field}", "assets:update"),
+    ("GET", "/api/v1/hosts/{id}/history", "assets:read"),
+    ("POST", "/api/v1/hosts/{id}/recheck", "assets:recheck"),
+    ("GET", "/api/v1/services", "assets:read"),
+    ("GET", "/api/v1/services/{id}", "assets:read"),
+    ("PATCH", "/api/v1/services/{id}", "assets:update"),
+    ("POST", "/api/v1/services/{id}/cookies/{name}/reveal", "sensitive:reveal"),
+    ("GET", "/api/v1/service-groups", "assets:read"),
+    ("GET", "/api/v1/findings", "findings:read"),
+    ("GET", "/api/v1/findings/{id}", "findings:read"),
+    ("PATCH", "/api/v1/findings/{id}", "findings:update"),
+    ("POST", "/api/v1/findings/bulk", "findings:update"),
+    ("GET", "/api/v1/findings/export", "findings:export"),
+    ("POST", "/api/v1/findings/defectdojo", "findings:defectdojo"),
+    ("GET", "/api/v1/diffs", "changes:read"),
+    ("GET", "/api/v1/signatures", "signatures:read"),
+    ("POST", "/api/v1/signatures", "signatures:create"),
+    ("GET", "/api/v1/signatures/{id}", "signatures:read"),
+    ("PATCH", "/api/v1/signatures/{id}", "signatures:update"),
+    ("DELETE", "/api/v1/signatures/{id}", "signatures:delete"),
+    ("POST", "/api/v1/signatures/test", "signatures:test"),
+    ("POST", "/api/v1/signatures/import", "signatures:create"),
+    ("GET", "/api/v1/signatures/export", "signatures:read"),
+    ("GET", "/api/v1/users", "users:read"),
+    ("POST", "/api/v1/users", "users:manage"),
+    ("PATCH", "/api/v1/users/{id}", "users:manage"),
+    ("DELETE", "/api/v1/users/{id}", "users:manage"),
+    ("GET", "/api/v1/roles", "roles:read"),
+    ("POST", "/api/v1/roles", "roles:manage"),
+    ("PATCH", "/api/v1/roles/{id}", "roles:manage"),
+    ("DELETE", "/api/v1/roles/{id}", "roles:manage"),
+    ("GET", "/api/v1/permissions", "roles:read"),
+    ("GET", "/api/v1/integrations/defectdojo", "integrations:read"),
+    ("PUT", "/api/v1/integrations/defectdojo", "integrations:manage"),
+    ("POST", "/api/v1/integrations/defectdojo/test", "integrations:manage"),
+    ("GET", "/api/v1/integrations/defectdojo/exports", "integrations:read"),
+    ("GET", "/api/v1/engines", "integrations:read"),
+    ("GET", "/api/v1/audit", "audit:read"),
+    ("GET", "/api/v1/settings", "settings:read"),
+    ("PATCH", "/api/v1/settings", "settings:manage"),
+    ("GET", "/api/v1/security/encryption", "settings:read"),
+    ("POST", "/api/v1/security/encryption/rotate", "settings:manage"),
+];
+
+/// Permission a custom role needs for a matched `/api/v1` route; `None` = custom roles may
+/// not call it (they reach only `Public`/`Authenticated` routes and this table).
+pub fn v1_perm(method: &str, path: &str) -> Option<&'static str> {
+    let method = if method == "HEAD" { "GET" } else { method };
+    V1_PERMS.iter().find(|(m, p, _)| *m == method && *p == path).map(|&(_, _, perm)| perm)
+}
+
+/// What an action check inside a handler means for a custom role (the route itself was
+/// already checked against [`V1_PERMS`] by the gate).
+pub fn custom_can(perms: &[String], action: Action) -> bool {
+    let has = |p: &str| perms.iter().any(|x| x == p);
+    let any = |suffix: &str| perms.iter().any(|x| x.ends_with(suffix));
+    match action {
+        Action::Read => any(":read"),
+        Action::ReadEvidence => has("sensitive:reveal"),
+        Action::Create => any(":create") || any(":import"),
+        Action::Update => any(":update"),
+        Action::Delete => any(":delete"),
+        Action::ExecuteScan => has("scans:create") || has("scans:control") || has("assets:recheck"),
+        Action::ManageUsers => has("users:manage"),
+        Action::ManageIntegrations => has("integrations:manage"),
+        Action::ReadAudit => has("audit:read"),
+    }
+}
 
 /// Rule of a matched route; `None` = not in the table (admin-only fallback).
 pub fn rule(method: &str, path: &str) -> Option<Rule> {
@@ -270,5 +397,26 @@ mod tests {
         assert_eq!(rule("POST", "/api/scans/{id}/run"), Some(Requires(ExecuteScan)));
         assert_eq!(rule("GET", "/api/runs/{id}/export"), None, "unknown routes are not guessed");
         assert_eq!(rule("DELETE", "/api/health"), None);
+    }
+    #[test]
+    fn every_v1_route_has_a_contract_permission() {
+        // Custom roles reach exactly the routes of the dashboard contract.
+        for (m, p, r) in ROUTES {
+            if p.starts_with("/api/v1/") && matches!(r, Rule::Requires(_)) {
+                assert!(v1_perm(m, p).is_some(), "{m} {p} missing from V1_PERMS");
+            }
+        }
+        for (m, p, perm) in V1_PERMS {
+            assert!(rule(m, p).is_some(), "{m} {p} is not a route");
+            assert!(PERMISSIONS.contains(perm), "{perm} is not a contract permission");
+        }
+    }
+
+    #[test]
+    fn custom_role_handler_checks() {
+        let perms: Vec<String> = ["findings:read", "findings:update"].iter().map(|s| s.to_string()).collect();
+        assert!(custom_can(&perms, Action::Update));
+        assert!(!custom_can(&perms, Action::ExecuteScan));
+        assert!(!custom_can(&perms, Action::ReadEvidence));
     }
 }
