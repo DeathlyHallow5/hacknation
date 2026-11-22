@@ -46,7 +46,8 @@ flowchart LR
 
 Нужен только **Docker** (Docker Desktop на Windows/macOS или Docker Engine + Compose на Linux), ~4 ГБ RAM.
 
-**1. Настройки** — создайте `.env` со случайными ключами и паролями (ASI и DefectDojo).
+**1. Настройки** — общий `.env` команды уже лежит в репозитории (пароли и ключи для локального стенда), этот шаг
+можно пропустить. Для своего стенда создайте `.env` со случайными ключами и паролями (ASI и DefectDojo):
 
 Windows (PowerShell):
 
