@@ -138,6 +138,7 @@ export function findingsForHost(h: HostRec, base: number, now: number): Finding[
         : null,
       first_seen: firstSeen,
       last_seen: h.lastSeen,
+      occurrences: measurements.total,
     });
   };
 

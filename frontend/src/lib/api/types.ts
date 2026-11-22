@@ -621,6 +621,22 @@ export interface UnstableHost {
   by_hour: (number | null)[];
   last_recheck_at: ISODate | null;
   recheck_pending: boolean;
+  /** Presence depends on the hour of day (Europe/Warsaw), e.g. visible only 08–18; null when no such pattern. */
+  time_pattern: TimePattern | null;
+}
+
+/** Hours [start_hour, end_hour) when the host answers; end_hour <= start_hour crosses midnight. */
+export interface TimePattern {
+  start_hour: number;
+  end_hour: number;
+  inside_responded: number;
+  inside_total: number;
+  outside_responded: number;
+  outside_total: number;
+  /** e.g. "Widoczny tylko 08–18" */
+  label: string;
+  /** Why it is flagged, with the counts behind it (Polish). */
+  reason: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -677,8 +693,11 @@ export interface Finding {
   notes: string | null;
   manual_overrides: ManualOverrides;
   defectdojo: { exported_at: ISODate; finding_id: number; url: string } | null;
+  /** One finding per problem (category + host/service/URL), across every scan that saw it. */
   first_seen: ISODate;
   last_seen: ISODate;
+  /** Finished scans that observed it. */
+  occurrences: number;
 }
 
 export type FindingPatch = Partial<{

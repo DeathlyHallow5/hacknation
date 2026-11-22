@@ -120,6 +120,7 @@ export function assetRoutes(route: RouteFn) {
           by_hour: h.byHour ?? Array(24).fill(null),
           last_recheck_at: h.lastRecheckAt,
           recheck_pending: Boolean(h.recheckRequestedAt),
+          time_pattern: null,
         };
       })
       .sort((a, b) => Number(b.recheck_pending) - Number(a.recheck_pending) || a.response_rate - b.response_rate)
