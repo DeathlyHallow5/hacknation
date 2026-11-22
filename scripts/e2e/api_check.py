@@ -26,7 +26,8 @@ st, s2 = admin.call("PATCH", "/settings", {"change_detection": {"inactive_after_
 check("settings update", st == 200 and s2["change_detection"]["inactive_after_misses"] == 2, (st, s2))
 st, enc = admin.call("GET", "/security/encryption")
 check("encryption status (live round-trip)", st == 200 and enc["enabled"] and enc["key_id"].startswith("sha256:"), enc)
-check("key rotation honest 501", admin.call("POST", "/security/encryption/rotate")[0] == 501)
+# Without ASI_DATA_KEY_PREVIOUS there is nothing to rotate: 409 with the procedure.
+check("key rotation needs a previous key (409)", admin.call("POST", "/security/encryption/rotate")[0] == 409)
 st, eng = admin.call("GET", "/engines")
 check("engines with versions", st == 200 and all(e["status"] == "ok" and e["version"] for e in eng), eng)
 st, dd = admin.call("GET", "/integrations/defectdojo")
@@ -163,10 +164,12 @@ check("signature match shows up as a finding", st == 200 and any(x.get("signatur
 check("delete custom signature", admin.call("DELETE", f"/signatures/{cs['id']}")[0] == 204)
 
 # ---------- findings bulk ----------
+# Re-read: the custom signature above is deleted, and with it the finding it produced.
+f = admin.call("GET", "/findings?category=admin_panel&page_size=100")[1]
 ids = [x["id"] for x in f["items"][:2]]
-st, bk = admin.call("POST", "/findings/bulk", {"ids": ids, "action": "tag", "payload": {"tag": "przegląd"}})
+st, bk = admin.call("POST", "/findings/bulk", {"ids": ids, "action": "tag", "payload": {"tag": f"przeglad-{tag}"}})
 check("findings bulk tag", st == 200 and bk["affected"] == len(ids), (st, bk))
-admin.call("POST", "/findings/bulk", {"ids": ids, "action": "untag", "payload": {"tag": "przegląd"}})
+admin.call("POST", "/findings/bulk", {"ids": ids, "action": "untag", "payload": {"tag": f"przeglad-{tag}"}})
 
 # ---------- RBAC on new routes ----------
 viewer = login(f"obs-{tag}", pw)
@@ -184,7 +187,6 @@ check("analyst: settings forbidden", analyst.call("GET", "/settings")[0] == 403)
 
 # cleanup
 admin.call("PATCH", "/settings", {"change_detection": {"inactive_after_misses": 3}})
-admin.call("PUT", "/integrations/defectdojo", {"enabled": False, "url": ""})
 admin.call("DELETE", f"/profiles/{p['id']}")
 admin.call("DELETE", f"/users/{u['id']}")
 admin.call("DELETE", f"/users/{uv['id']}")

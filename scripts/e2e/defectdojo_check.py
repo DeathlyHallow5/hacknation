@@ -40,7 +40,12 @@ exports = asi.call("GET", "/integrations/defectdojo/exports")[1]
 auto = next((e for e in exports if e["by"] in ("", "automatycznie (po skanie)")), None)
 check("automatic export recorded in ASI", auto is not None and auto["status"] == "success", exports[:3])
 tests = dd(f"/api/v2/tests/?engagement={eng}&limit=100", token=tok)
-check("DefectDojo: a new test in the engagement", tests["count"] > tests_before, tests["count"])
+# One finding per problem: a rescan exports only problems DefectDojo has not seen yet.
+fresh = [f for f in asi.call("GET", "/findings?page_size=500")[1]["items"]
+         if f["score"] >= cfg["min_score"] and f.get("change") != "gone" and f["status"] in ("open", "in_review", "confirmed") and not f.get("defectdojo")]
+check("DefectDojo: new problems exported, known ones not re-imported",
+      (tests["count"] > tests_before) or (tests["count"] == tests_before and not fresh),
+      (tests_before, tests["count"], [f["title"] for f in fresh][:5]))
 newest = max(tests["results"], key=lambda t: t["id"])
 fnd = dd(f"/api/v2/findings/?test={newest['id']}&limit=100", token=tok)["results"]
 print("  DefectDojo findings:", [(f["title"][:50], f["severity"]) for f in fnd])
