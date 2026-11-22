@@ -326,13 +326,17 @@ export function TargetsView() {
       <PageHeader
         title="Zakresy"
         description={
-          all.data ? (
+          <>
+            Co monitorujemy: adresy IP, sieci CIDR i domeny, które wolno skanować. Zacznij tu — skanowanie wybiera cele z tej listy.
+            {all.data ? " " : null}
+          {all.data ? (
             <span className="tabular">
               {countLabel(summary.ranges, ["zakres CIDR", "zakresy CIDR", "zakresów CIDR"])} i {countLabel(summary.domains, ["domena", "domeny", "domen"])}, razem{" "}
               {countLabel(summary.addresses, ["adres", "adresy", "adresów"])}.
               {summary.excluded ? ` Wykluczono ${countLabel(summary.excluded, ["adres", "adresy", "adresów"])}.` : ""}
             </span>
-          ) : undefined
+          ) : null}
+          </>
         }
         actions={
           <>

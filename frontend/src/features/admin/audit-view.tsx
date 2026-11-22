@@ -45,7 +45,7 @@ export function AuditView() {
   });
   return (
     <Container className="pb-12">
-      <PageHeader title="Dziennik zdarzeń" description="Wpisów nie można edytować ani usuwać." />
+      <PageHeader title="Dziennik zdarzeń" description="Kto, co i kiedy zmienił w panelu. Wpisów nie można edytować ani usuwać." />
       <Panel flush>
         <div className="grid grid-cols-2 gap-2 border-b border-line px-5 py-3 sm:flex sm:flex-wrap sm:items-center">
           <SearchInput value={q} onChange={(v) => { setQ(v); setPage(1); }} placeholder="Szukaj w opisie, zasobie, osobie…" className="col-span-2 sm:w-80" />

@@ -1,12 +1,12 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, LogOut, Menu, Search, ShieldCheck, UserRoundCog } from "lucide-react";
+import { ChevronDown, LogOut, Menu, Search, Settings2, ShieldCheck, UserRoundCog } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as React from "react";
 import { Wordmark } from "@/components/brand/logo";
-import { ADMIN_NAV, NAV, isActive } from "@/components/layout/nav";
+import { ADMIN_NAV, HELP_NAV, NAV, NAV_GROUP_LABEL, isActive, type NavItem } from "@/components/layout/nav";
 import { Button } from "@/components/ui/button";
 import { Segmented, Switch } from "@/components/ui/form-controls";
 import { Kbd } from "@/components/ui/misc";
@@ -25,6 +25,7 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
+  Tooltip,
 } from "@/components/ui/overlays";
 import { api } from "@/lib/api/endpoints";
 import { fmtPercent } from "@/lib/format";
@@ -197,16 +198,19 @@ function AdminMenu({ pathname }: { pathname: string }) {
   if (!items.length) return null;
   const active = items.some((i) => isActive(pathname, i.href));
   return (
+    <>
+    <span className="mx-1.5 h-5 w-px shrink-0 bg-chrome-line" aria-hidden />
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
           className={cn(
-            "relative inline-flex h-11 items-center gap-1 px-3 text-sm font-semibold transition-colors hover:text-chrome-ink",
+            "relative inline-flex h-11 shrink-0 items-center gap-2 px-3 text-sm font-semibold transition-colors hover:text-chrome-ink",
             active ? "text-chrome-ink" : "text-chrome-ink-2",
           )}
         >
-          Administracja <ChevronDown className="size-3.5" aria-hidden />
+          <Settings2 className="size-4 shrink-0" aria-hidden />
+          Administracja <ChevronDown className="-ml-1 size-3.5" aria-hidden />
           {active ? <span className="absolute inset-x-3 bottom-0 h-[3px] rounded-t-full bg-accent" aria-hidden /> : null}
         </button>
       </DropdownMenuTrigger>
@@ -224,13 +228,21 @@ function AdminMenu({ pathname }: { pathname: string }) {
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
+    </>
   );
 }
 
 function MobileNav({ pathname }: { pathname: string }) {
   const can = useCan();
   const [open, setOpen] = React.useState(false);
-  const items = [...NAV, ...ADMIN_NAV].filter((i) => can(i.perm));
+  const sections: { heading: string; items: Omit<NavItem, "perm">[] }[] = [
+    ...(["start", "analysis", "scanning"] as const).map((g) => ({
+      heading: NAV_GROUP_LABEL[g],
+      items: NAV.filter((i) => i.group === g && can(i.perm)),
+    })),
+    { heading: "Administracja", items: ADMIN_NAV.filter((i) => can(i.perm)) },
+    { heading: "Pomoc", items: [HELP_NAV] },
+  ].filter((s) => s.items.length);
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <Button variant="chrome-ghost" size="icon" className="lg:hidden" aria-label="Otwórz menu" onClick={() => setOpen(true)}>
@@ -240,22 +252,49 @@ function MobileNav({ pathname }: { pathname: string }) {
         <SheetHeader>
           <SheetTitle>Menu</SheetTitle>
         </SheetHeader>
-        <SheetBody className="grid content-start gap-1 px-3">
-          {items.map((i) => (
-            <Link
-              key={i.href}
-              href={i.href}
-              onClick={() => setOpen(false)}
-              aria-current={isActive(pathname, i.href) ? "page" : undefined}
-              className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-ink-2 hover:bg-surface-3 hover:text-ink aria-[current=page]:bg-accent/10 aria-[current=page]:text-ink"
-            >
-              <i.icon className="size-4" aria-hidden />
-              {i.label}
-            </Link>
+        <SheetBody className="grid content-start gap-4 px-3">
+          {sections.map((s) => (
+            <section key={s.heading} aria-label={s.heading} className="grid gap-0.5">
+              <h3 className="px-3 pb-1 text-xs font-semibold tracking-wide text-ink-2 uppercase">{s.heading}</h3>
+              {s.items.map((i) => (
+                <Link
+                  key={i.href}
+                  href={i.href}
+                  onClick={() => setOpen(false)}
+                  aria-current={isActive(pathname, i.href) ? "page" : undefined}
+                  className="group flex items-start gap-3 rounded-lg px-3 py-2 text-ink-2 hover:bg-surface-3 hover:text-ink aria-[current=page]:bg-accent/10 aria-[current=page]:text-ink"
+                >
+                  <i.icon className="mt-0.5 size-4 shrink-0" aria-hidden />
+                  <span className="grid gap-0.5 leading-tight">
+                    <span className="text-sm font-semibold text-ink">{i.label}</span>
+                    <span className="text-xs text-pretty">{i.description}</span>
+                  </span>
+                </Link>
+              ))}
+            </section>
           ))}
         </SheetBody>
       </SheetContent>
     </Sheet>
+  );
+}
+
+function HelpButton() {
+  const pathname = usePathname();
+  return (
+    <Tooltip content={HELP_NAV.description} side="bottom">
+      <Button
+        asChild
+        variant="chrome"
+        size="sm"
+        className={cn("h-9 px-2.5", isActive(pathname, HELP_NAV.href) && "border-accent")}
+      >
+        <Link href={HELP_NAV.href} aria-label="Pomoc: jak korzystać z panelu">
+          <HELP_NAV.icon className="!size-[1.1rem]" aria-hidden />
+          <span className="hidden xl:inline">Pomoc</span>
+        </Link>
+      </Button>
+    </Tooltip>
   );
 }
 
@@ -284,27 +323,35 @@ export function TopBar({ onOpenSearch }: { onOpenSearch: () => void }) {
             <Search />
           </Button>
           <LiveScanPill />
+          <HelpButton />
           <A11yMenu />
           <UserMenu />
         </div>
       </div>
       <nav aria-label="Główne sekcje" className="hidden border-t border-chrome-line/70 lg:block">
         <div className="scroll-quiet relative mx-auto flex max-w-[1440px] items-center gap-0.5 overflow-x-auto px-5 lg:px-6">
-          {NAV.filter((i) => can(i.perm)).map((i) => {
+          {NAV.filter((i) => can(i.perm)).map((i, n, list) => {
             const active = isActive(pathname, i.href);
+            // A thin divider where the group changes: Start | Analiza wyników | Konfiguracja skanowania.
+            const newGroup = n > 0 && list[n - 1].group !== i.group;
             return (
-              <Link
-                key={i.href}
-                href={i.href}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "relative inline-flex h-11 items-center px-3 text-sm font-semibold transition-colors hover:text-chrome-ink",
-                  active ? "text-chrome-ink" : "text-chrome-ink-2",
-                )}
-              >
-                {i.label}
-                {active ? <span className="absolute inset-x-3 bottom-0 h-[3px] rounded-t-full bg-accent" aria-hidden /> : null}
-              </Link>
+              <React.Fragment key={i.href}>
+                {newGroup ? <span className="mx-1.5 h-5 w-px shrink-0 bg-chrome-line" aria-hidden /> : null}
+                <Tooltip content={i.description} side="bottom">
+                  <Link
+                    href={i.href}
+                    aria-current={active ? "page" : undefined}
+                    className={cn(
+                      "relative inline-flex h-11 shrink-0 items-center gap-2 px-3 text-sm font-semibold transition-colors hover:text-chrome-ink",
+                      active ? "text-chrome-ink" : "text-chrome-ink-2",
+                    )}
+                  >
+                    <i.icon className="size-4 shrink-0" aria-hidden />
+                    {i.label}
+                    {active ? <span className="absolute inset-x-3 bottom-0 h-[3px] rounded-t-full bg-accent" aria-hidden /> : null}
+                  </Link>
+                </Tooltip>
+              </React.Fragment>
             );
           })}
           <AdminMenu pathname={pathname} />

@@ -133,7 +133,7 @@ function SettingsForm({ data }: { data: Settings }) {
     <Container className="pb-12">
       <PageHeader
         title="Ustawienia"
-        description="Każda zmiana ustawień trafia do dziennika zdarzeń."
+        description="Granice i tempo skanowania oraz szyfrowanie danych. Każda zmiana ustawień trafia do dziennika zdarzeń."
         actions={
           <Guard permission="settings:manage">
             <Button variant="primary" onClick={save} disabled={!dirty || badCidrs.length > 0}>

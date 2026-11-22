@@ -93,7 +93,8 @@ export function NewScanView() {
   const [filter, setFilter] = React.useState("");
   const [typeFilter, setTypeFilter] = React.useState<TargetType | "">("");
   const [tagFilter, setTagFilter] = React.useState<Set<string>>(new Set());
-  const [profileId, setProfileId] = React.useState("p-1");
+  // null = untouched: "Standardowy" (else the first the server lists; ids are server-generated).
+  const [pickedProfile, setProfileId] = React.useState<string | null>(null);
   const [start, setStart] = React.useState<"now" | "window" | "test">("now");
   const [testSeconds, setTestSeconds] = React.useState(25);
   const [winStart, setWinStart] = React.useState("22:00");
@@ -104,6 +105,7 @@ export function NewScanView() {
 
   const targets = useQuery({ queryKey: ["targets", "all"], queryFn: allTargets });
   const profiles = useQuery({ queryKey: ["profiles"], queryFn: api.profiles.list });
+  const profileId = pickedProfile ?? (profiles.data?.find((p) => p.name === "Standardowy") ?? profiles.data?.[0])?.id ?? "";
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings.get });
 
   const defaultSelection = React.useMemo(
@@ -119,7 +121,7 @@ export function NewScanView() {
   const estimate = useQuery({
     queryKey: ["estimate", ids.join(","), profileId, winStart, winEnd],
     queryFn: () => api.scans.estimate({ target_ids: ids, profile_id: profileId, window: scanWindow }),
-    enabled: ids.length > 0,
+    enabled: ids.length > 0 && !!profileId,
     placeholderData: (p) => p,
   });
 
@@ -178,7 +180,11 @@ export function NewScanView() {
 
   return (
     <Container className="pb-12">
-      <PageHeader back={{ href: "/scans", label: "Skanowania" }} title="Nowe skanowanie" />
+      <PageHeader
+        back={{ href: "/scans", label: "Skanowania" }}
+        title="Nowe skanowanie"
+        description="Cztery kroki: wybierz cele, profil, termin i sprawdź podsumowanie. Nic nie zostanie uruchomione przed ostatnim krokiem."
+      />
       <div className="mb-6">
         <Stepper step={step} onStep={go} maxStep={maxStep} />
       </div>

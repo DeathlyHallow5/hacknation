@@ -16,6 +16,7 @@ import { SegmentBar, TechBars } from "@/components/viz/bits";
 import { ChangesTimeline, KIND_COLOR, KIND_ORDER } from "@/components/viz/changes-timeline";
 import { HilbertMap, MAP_RANGES } from "@/components/viz/hilbert-map";
 import { Sparkline } from "@/components/viz/sparkline";
+import { GettingStarted } from "@/features/dashboard/getting-started";
 import { FindingDrawer } from "@/features/findings/finding-drawer";
 import { FindingsTable } from "@/features/findings/findings-table";
 import { api } from "@/lib/api/endpoints";
@@ -382,6 +383,7 @@ export function DashboardView() {
       <Hero s={summary.data} mapCidr={mapCidr} setMapCidr={setMapCidr} ranges={ranges} />
       <Container className="grid gap-6 py-8">
         {summary.isError ? <ErrorState error={summary.error} onRetry={() => summary.refetch()} /> : null}
+        <GettingStarted s={summary.data} />
 
         {can("findings:read") ? (
           <Panel

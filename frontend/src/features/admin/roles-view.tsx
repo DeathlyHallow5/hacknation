@@ -169,7 +169,7 @@ export function RolesView() {
     <Container className="pb-12">
       <PageHeader
         title="Role i uprawnienia"
-        description="Role wbudowane można tylko skopiować; role własne edytujesz dowolnie."
+        description="Co może każda rola w panelu. Role wbudowane można tylko skopiować; role własne edytujesz dowolnie."
         actions={
           <Guard permission="roles:manage">
             <Button variant="primary" onClick={() => setSheet({ role: null })}>

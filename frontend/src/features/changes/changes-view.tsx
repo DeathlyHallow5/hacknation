@@ -166,7 +166,10 @@ export function ChangesView() {
 
   return (
     <Container className="pb-12">
-      <PageHeader title="Zmiany" description="Pewność zmiany uwzględnia powtórne pomiary." />
+      <PageHeader
+        title="Zmiany"
+        description="Porównanie dwóch skanowań: co się pojawiło, zniknęło lub zmieniło. Wybierz skany poniżej albo kliknij słupek na wykresie. Pewność zmiany uwzględnia powtórne pomiary."
+      />
       <div className="grid gap-6">
         <Panel bodyClassName="grid gap-5">
           <div className="flex flex-wrap items-end gap-3">
