@@ -91,7 +91,7 @@ export const SCAN_PHASES: { key: ScanPhase; label: string; tool: string; command
   { key: "preflight", label: "Kontrola wstępna", tool: "odsiew martwych adresów", command: false },
   { key: "discovery", label: "Wykrywanie hostów", tool: "nmap -sn / naabu", command: true },
   { key: "services", label: "Porty i usługi", tool: "nmap -sV", command: true },
-  { key: "http", label: "HTTP/HTTPS", tool: "httpx, tlsx", command: true },
+  { key: "http", label: "HTTP/HTTPS", tool: "httpx", command: true },
   { key: "signatures", label: "Sygnatury", tool: "reguły detekcji", command: false },
   { key: "diff", label: "Porównanie", tool: "silnik zmian", command: false },
 ];

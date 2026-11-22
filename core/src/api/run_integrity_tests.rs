@@ -1,5 +1,6 @@
 use super::*;
-use crate::{config::Config, engine::Tool};
+use crate::{config::Config, engine::Tool, history, pipeline};
+use uuid::Uuid;
 use sqlx::PgPool;
 
 // Run with DATABASE_URL pointing at a disposable PostgreSQL server. sqlx creates a
@@ -78,9 +79,14 @@ async fn run_integrity(db: PgPool) -> anyhow::Result<()> {
     })
     .await??;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let _ = cancel_run(State(state.clone()), Path(pending))
-        .await
-        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    // What `POST /api/v1/scans/{id}/cancel` does: the worker stops after its current batch.
+    sqlx::query(
+        "UPDATE scan_runs SET status = 'cancelled', resume_at = NULL, finished_at = COALESCE(finished_at, now())
+         WHERE id = $1 AND status IN ('queued', 'running', 'paused')",
+    )
+    .bind(pending)
+    .execute(&db)
+    .await?;
     worker.await??;
     let (status, stats) = result(pending).await?;
     assert_eq!(status, "cancelled");

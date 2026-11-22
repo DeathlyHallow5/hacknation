@@ -7,7 +7,7 @@ ARG BASE_REGISTRY=docker.io/library
 FROM ${BASE_REGISTRY}/python:3.13-slim-bookworm AS tools
 WORKDIR /build
 COPY tools/install_tools.py tools/versions.json tools/
-RUN python tools/install_tools.py --dest /opt/asi-tools --only naabu httpx tlsx nuclei
+RUN python tools/install_tools.py --dest /opt/asi-tools --only naabu httpx
 
 # 2) Rust build. Dependencies are cached in a separate layer.
 FROM ${BASE_REGISTRY}/rust:1-bookworm AS builder

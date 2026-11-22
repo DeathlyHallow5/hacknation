@@ -9,7 +9,7 @@
 //!   writes the audit row of each changing request and of each 401/403.
 //! - Login limiter: 5 failures per login or 20 per IP in 15 minutes → 429.
 
-use crate::api::{bad, internal, not_found, ApiError, ApiResult};
+use crate::api::{bad, internal, ApiError};
 use crate::audit::{self, Event, Note, Outcome};
 use crate::rbac::{self, Action, Role, Rule};
 use crate::AppState;
@@ -18,15 +18,14 @@ use argon2::{
     Argon2,
 };
 use axum::{
-    extract::{ConnectInfo, FromRequestParts, MatchedPath, Path, RawPathParams, Request, State},
+    extract::{ConnectInfo, FromRequestParts, MatchedPath, RawPathParams, Request, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     Extension, Json,
 };
 use base64::Engine;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -352,26 +351,6 @@ pub async fn gate(State(s): State<AppState>, req: Request, next: Next) -> Respon
 
 // ---------- auth API ----------
 
-#[derive(Deserialize)]
-pub struct LoginBody {
-    username: String,
-    password: String,
-}
-
-#[derive(Serialize, sqlx::FromRow)]
-pub struct UserOut {
-    id: Uuid,
-    username: String,
-    role: Role,
-    disabled: bool,
-    can_execute_scans: bool,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-    last_login_at: Option<DateTime<Utc>>,
-}
-
-const USER_COLUMNS: &str = "id, username, role, disabled, can_execute_scans, created_at, updated_at, last_login_at";
-
 /// Logins: 3..=64 of a-z 0-9 . _ - (lower-cased), starting with a letter or digit.
 pub(crate) fn normalize_username(name: &str) -> Result<String, ApiError> {
     let name = name.trim().to_ascii_lowercase();
@@ -383,7 +362,6 @@ pub(crate) fn normalize_username(name: &str) -> Result<String, ApiError> {
 
 pub(crate) struct SignedIn {
     pub token: String,
-    pub expires_at: DateTime<Utc>,
     pub user_id: Uuid,
     pub username: String,
     pub role: Role,
@@ -398,7 +376,7 @@ pub(crate) enum SignInError {
     Internal,
 }
 
-/// Check the password, open a session, write the audit row. Shared by `/api/auth/login`
+/// Check the password, open a session, write the audit row. Used by `/api/v1/auth/login`
 /// and the dashboard's `/api/v1/auth/login`; `route` is the path recorded in the audit.
 pub(crate) async fn sign_in(
     s: &AppState,
@@ -456,29 +434,28 @@ pub(crate) async fn sign_in(
         tracing::error!("{e}");
         SignInError::Internal
     })?;
-    let session: Result<DateTime<Utc>, sqlx::Error> = async {
+    let session: Result<(), sqlx::Error> = async {
         let mut tx = s.db.begin().await?;
-        let expires_at: DateTime<Utc> = sqlx::query_scalar(
+        sqlx::query(
             "INSERT INTO sessions (user_id, token_hash, ip, expires_at)
-             VALUES ($1, $2, $3::inet, now() + make_interval(hours => $4)) RETURNING expires_at",
+             VALUES ($1, $2, $3::inet, now() + make_interval(hours => $4))",
         )
         .bind(user_id)
         .bind(token_hash(&token))
         .bind(ip.map(|ip| ip.to_string()))
         .bind(s.config.session_ttl_hours as i32)
-        .fetch_one(&mut *tx)
+        .execute(&mut *tx)
         .await?;
         sqlx::query("UPDATE users SET last_login_at = now() WHERE id = $1").bind(user_id).execute(&mut *tx).await?;
-        tx.commit().await?;
-        Ok(expires_at)
+        tx.commit().await
     }
     .await;
-    let expires_at = session.map_err(|e| {
+    session.map_err(|e| {
         tracing::error!("session insert: {e}");
         SignInError::Internal
     })?;
     audit::record(&s.db, event(Some(user_id), StatusCode::OK, Outcome::Success)).await;
-    Ok(SignedIn { token, expires_at, user_id, username, role, can_execute_scans })
+    Ok(SignedIn { token, user_id, username, role, can_execute_scans })
 }
 
 /// Attach the session cookie to a login response.
@@ -488,28 +465,7 @@ pub(crate) fn with_session_cookie(mut response: Response, s: &AppState, token: &
     response
 }
 
-/// `POST /api/auth/login` → `{token, expires_at, user}` + session cookie.
-pub async fn login(State(s): State<AppState>, Extension(ClientIp(ip)): Extension<ClientIp>, Json(b): Json<LoginBody>) -> Response {
-    match sign_in(&s, ip, &b.username, b.password, "/api/auth/login").await {
-        Ok(si) => {
-            let user = json!({
-                "id": si.user_id, "username": si.username, "role": si.role, "can_execute_scans": si.can_execute_scans,
-            });
-            let body = Json(json!({ "token": si.token, "expires_at": si.expires_at, "user": user })).into_response();
-            with_session_cookie(body, &s, &si.token)
-        }
-        // Same reply for every failure: no hint whether the login exists.
-        Err(SignInError::Invalid) => {
-            (StatusCode::UNAUTHORIZED, Json(json!({ "detail": "invalid credentials" }))).into_response()
-        }
-        Err(SignInError::Limited) => {
-            (StatusCode::TOO_MANY_REQUESTS, Json(json!({ "detail": "too many failed logins, try later" }))).into_response()
-        }
-        Err(SignInError::Internal) => internal("login failed").into_response(),
-    }
-}
-
-/// `POST /api/auth/logout` — revokes the current session and clears the cookie.
+/// `POST /api/v1/auth/logout` — revokes the current session and clears the cookie.
 pub async fn logout(State(s): State<AppState>, Extension(user): Extension<CurrentUser>) -> Response {
     if let Err(e) = sqlx::query("UPDATE sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL")
         .bind(user.session_id)
@@ -524,75 +480,7 @@ pub async fn logout(State(s): State<AppState>, Extension(user): Extension<Curren
     response
 }
 
-/// `GET /api/auth/me`
-pub async fn me(Extension(user): Extension<CurrentUser>) -> Json<Value> {
-    let rights: Vec<Action> = Action::ALL.into_iter().filter(|a| user.can(*a)).collect();
-    Json(json!({ "user": user, "rights": rights }))
-}
-
 // ---------- users API (admin) ----------
-
-/// `GET /api/users`
-pub async fn list_users(State(s): State<AppState>) -> ApiResult<Vec<UserOut>> {
-    let rows = sqlx::query_as::<_, UserOut>(sqlx::AssertSqlSafe(format!(
-        "SELECT {USER_COLUMNS} FROM users ORDER BY username"
-    )))
-    .fetch_all(&s.db)
-    .await
-    .map_err(internal)?;
-    Ok(Json(rows))
-}
-
-#[derive(Deserialize)]
-pub struct CreateUser {
-    username: String,
-    password: String,
-    #[serde(default = "viewer")]
-    role: Role,
-    can_execute_scans: Option<bool>,
-}
-
-fn viewer() -> Role {
-    Role::Viewer
-}
-
-/// `POST /api/users`
-pub async fn create_user(
-    State(s): State<AppState>,
-    Json(b): Json<CreateUser>,
-) -> Result<(StatusCode, Extension<Note>, Json<UserOut>), ApiError> {
-    let username = normalize_username(&b.username)?;
-    check_password_policy(&b.password)?;
-    let flag = b.role.execute_flag(b.can_execute_scans.unwrap_or_else(|| b.role.default_execute_flag()));
-    let hash = hash_blocking(b.password).await?;
-    let user = sqlx::query_as::<_, UserOut>(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO users (username, password_hash, role, can_execute_scans) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (username) DO NOTHING RETURNING {USER_COLUMNS}"
-    )))
-    .bind(&username)
-    .bind(hash)
-    .bind(b.role)
-    .bind(flag)
-    .fetch_optional(&s.db)
-    .await
-    .map_err(internal)?
-    .ok_or_else(|| (StatusCode::CONFLICT, Json(json!({ "detail": "username already exists" }))))?;
-    let note = Note::new(
-        "user.create",
-        "user",
-        user.id,
-        json!({ "username": username, "role": b.role, "can_execute_scans": flag }),
-    );
-    Ok((StatusCode::CREATED, Extension(note), Json(user)))
-}
-
-#[derive(Deserialize)]
-pub struct PatchUser {
-    role: Option<Role>,
-    password: Option<String>,
-    disabled: Option<bool>,
-    can_execute_scans: Option<bool>,
-}
 
 /// Refuse a change that would leave no active admin. Locks the admin rows, so two
 /// concurrent demotions cannot both pass.
@@ -606,97 +494,6 @@ pub(crate) async fn keep_an_admin(conn: &mut sqlx::PgConnection, target: Uuid) -
         return Err((StatusCode::CONFLICT, Json(json!({ "detail": "the last active admin cannot be removed" }))));
     }
     Ok(())
-}
-
-/// `PATCH /api/users/{id}` — role, password, disabled, can_execute_scans. Any change of
-/// role, password or disabled revokes the user's sessions.
-pub async fn update_user(
-    State(s): State<AppState>,
-    Extension(me): Extension<CurrentUser>,
-    Path(id): Path<Uuid>,
-    Json(b): Json<PatchUser>,
-) -> Result<(Extension<Note>, Json<UserOut>), ApiError> {
-    let hash = match b.password {
-        Some(p) => {
-            check_password_policy(&p)?;
-            Some(hash_blocking(p).await?)
-        }
-        None => None,
-    };
-    let mut tx = s.db.begin().await.map_err(internal)?;
-    let (role, flag, disabled): (Role, bool, bool) =
-        sqlx::query_as("SELECT role, can_execute_scans, disabled FROM users WHERE id = $1 FOR UPDATE")
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(internal)?
-            .ok_or_else(not_found)?;
-    let new_role = b.role.unwrap_or(role);
-    let new_disabled = b.disabled.unwrap_or(disabled);
-    if id == me.id && (new_role != role || new_disabled) {
-        return Err(bad("you cannot change your own role or disable yourself"));
-    }
-    if role == Role::Admin && !disabled && (new_role != Role::Admin || new_disabled) {
-        keep_an_admin(&mut tx, id).await?;
-    }
-    let new_flag = new_role.execute_flag(b.can_execute_scans.unwrap_or(flag));
-    let user = sqlx::query_as::<_, UserOut>(sqlx::AssertSqlSafe(format!(
-        "UPDATE users SET role = $2, can_execute_scans = $3, disabled = $4,
-             password_hash = COALESCE($5, password_hash), updated_at = now()
-         WHERE id = $1 RETURNING {USER_COLUMNS}"
-    )))
-    .bind(id)
-    .bind(new_role)
-    .bind(new_flag)
-    .bind(new_disabled)
-    .bind(&hash)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(internal)?;
-    if new_role != role || new_disabled != disabled || hash.is_some() {
-        revoke_sessions(&mut tx, id).await.map_err(internal)?;
-    }
-    tx.commit().await.map_err(internal)?;
-    let note = Note::new(
-        "user.update",
-        "user",
-        id,
-        json!({
-            "role": new_role, "can_execute_scans": new_flag, "disabled": new_disabled,
-            "password_changed": hash.is_some(),
-        }),
-    );
-    Ok((Extension(note), Json(user)))
-}
-
-/// `DELETE /api/users/{id}` — users are disabled, never deleted (audit rows refer to them).
-pub async fn disable_user(
-    State(s): State<AppState>,
-    Extension(me): Extension<CurrentUser>,
-    Path(id): Path<Uuid>,
-) -> Result<(Extension<Note>, Json<Value>), ApiError> {
-    if id == me.id {
-        return Err(bad("you cannot disable yourself"));
-    }
-    let mut tx = s.db.begin().await.map_err(internal)?;
-    let (role, disabled): (Role, bool) = sqlx::query_as("SELECT role, disabled FROM users WHERE id = $1 FOR UPDATE")
-        .bind(id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(internal)?
-        .ok_or_else(not_found)?;
-    if role == Role::Admin && !disabled {
-        keep_an_admin(&mut tx, id).await?;
-    }
-    sqlx::query("UPDATE users SET disabled = true, updated_at = now() WHERE id = $1")
-        .bind(id)
-        .execute(&mut *tx)
-        .await
-        .map_err(internal)?;
-    revoke_sessions(&mut tx, id).await.map_err(internal)?;
-    tx.commit().await.map_err(internal)?;
-    let note = Note::new("user.disable", "user", id, json!({}));
-    Ok((Extension(note), Json(json!({ "id": id, "disabled": true }))))
 }
 
 // ---------- bootstrap ----------

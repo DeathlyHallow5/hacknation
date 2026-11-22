@@ -24,7 +24,7 @@ const PHASE_LOG: Record<ScanPhase, string> = {
   preflight: "Pre-flight: odsiew adresów bez odpowiedzi (ICMP/TCP SYN 80,443)",
   discovery: "Wykrywanie hostów: nmap -sn, naabu (limit zapytań aktywny)",
   services: "Identyfikacja usług: nmap -sV --version-intensity 5",
-  http: "Odcisk HTTP/HTTPS: httpx -title -tech-detect -tls-grab, tlsx",
+  http: "Odcisk HTTP/HTTPS: httpx -title -tech-detect -tls-grab",
   signatures: "Sygnatury: tylko bezpieczne sprawdzenia GET/HEAD, bez logowania",
   diff: "Porównanie z poprzednim przebiegiem i ocena pewności zmian",
 };

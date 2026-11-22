@@ -198,6 +198,7 @@ export function TargetsView() {
   const [q, setQ] = React.useState(params.get("q") ?? "");
   const [type, setType] = React.useState<TargetType | "">("");
   const [crit, setCrit] = React.useState<Criticality | "">("");
+  const [tag, setTag] = React.useState("");
   const [page, setPage] = React.useState(1);
   const [sort, setSort] = React.useState("-criticality_rank");
   const [selection, setSelection] = React.useState<Set<string>>(new Set());
@@ -209,8 +210,8 @@ export function TargetsView() {
   const dq = useDebouncedValue(q);
 
   const query = useQuery({
-    queryKey: ["targets", dq, type, crit, page, sort],
-    queryFn: () => api.targets.list({ q: dq, type, criticality: crit, page, page_size: 25, sort }),
+    queryKey: ["targets", dq, type, crit, tag, page, sort],
+    queryFn: () => api.targets.list({ q: dq, type, criticality: crit, tag, page, page_size: 25, sort }),
     placeholderData: keepPreviousData,
   });
   const all = useQuery({ queryKey: ["targets", "summary"], queryFn: () => api.targets.list({ page_size: 500 }) });
@@ -221,6 +222,7 @@ export function TargetsView() {
       domains: items.filter((t) => t.type === "domain").length,
       addresses: items.filter((t) => !t.excluded && t.type !== "domain").reduce((n, t) => n + t.address_count, 0),
       excluded: items.filter((t) => t.excluded).reduce((n, t) => n + t.address_count, 0),
+      tags: [...new Set(items.flatMap((t) => t.tags))].sort(),
     };
   }, [all.data]);
 
@@ -373,6 +375,9 @@ export function TargetsView() {
           />
           <SimpleSelect aria-label="Typ celu" className="w-[calc(50%-0.25rem)] sm:w-40" value={type} onChange={(v) => { setType(v as TargetType | ""); setPage(1); }} allLabel="Każdy typ" options={(Object.keys(TARGET_TYPE_LABEL) as TargetType[]).map((t) => ({ value: t, label: TARGET_TYPE_LABEL[t] }))} />
           <SimpleSelect aria-label="Krytyczność" className="w-[calc(50%-0.25rem)] sm:w-44" value={crit} onChange={(v) => { setCrit(v as Criticality | ""); setPage(1); }} allLabel="Każda krytyczność" options={CRIT_OPTIONS} />
+          {summary.tags.length ? (
+            <SimpleSelect aria-label="Tag" className="w-full sm:w-44" value={tag} onChange={(v) => { setTag(v); setPage(1); }} allLabel="Każdy tag" options={summary.tags.map((g) => ({ value: g, label: `#${g}` }))} />
+          ) : null}
           {selected.length ? (
             <div className="flex flex-wrap items-center gap-2 rounded-lg bg-accent/10 px-3 py-1.5 text-sm sm:ml-auto">
               <span className="font-semibold">Zaznaczono: {selected.length}</span>

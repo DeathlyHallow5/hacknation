@@ -10,14 +10,42 @@ import { Container, PageHeader } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Checkbox, Field, Input, RadioCards, Segmented, Slider } from "@/components/ui/form-controls";
 import { Panel, Skeleton, Spinner } from "@/components/ui/misc";
+import { SimpleSelect } from "@/components/ui/select";
 import { errorMessage } from "@/lib/api/client";
 import { api } from "@/lib/api/endpoints";
-import type { ScanCreateRequest } from "@/lib/api/types";
+import type { ScanCreateRequest, Target, TargetType } from "@/lib/api/types";
 import { countLabel, fmtDate, fmtDuration, fmtNumber } from "@/lib/format";
 import { CRITICALITY_LABEL, TARGET_TYPE_LABEL } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 
 const STEPS = ["Cele", "Profil i bezpieczeństwo", "Termin", "Podsumowanie"];
+
+/** Every target, not just the first page: with hundreds of domains the picker must still see them all. */
+async function allTargets(): Promise<{ items: Target[] }> {
+  const first = await api.targets.list({ page_size: 500, page: 1, sort: "-criticality_rank" });
+  const pages = Math.ceil(first.total / first.page_size);
+  const rest = await Promise.all(Array.from({ length: Math.max(0, pages - 1) }, (_, i) => api.targets.list({ page_size: 500, page: i + 2, sort: "-criticality_rank" })));
+  return { items: [first, ...rest].flatMap((p) => p.items) };
+}
+
+/** A toggle chip for one tag filter; pressed = the list shows targets with this tag. */
+function TagToggle({ tag, count, pressed, onToggle }: { tag: string; count: number; pressed: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onToggle}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-semibold transition-colors",
+        pressed ? "border-accent bg-accent/12 text-link" : "border-line-strong text-ink-2 hover:text-ink",
+        "contrast:border-current",
+      )}
+    >
+      {pressed ? <Check className="size-3" strokeWidth={3} aria-hidden /> : null}#{tag}
+      <span className="tabular font-normal">{count}</span>
+    </button>
+  );
+}
 
 /** Wizard steps as a row of numbered labels; the current one is semibold and underlined in the action colour. */
 function Stepper({ step, onStep, maxStep }: { step: number; onStep: (s: number) => void; maxStep: number }) {
@@ -63,6 +91,8 @@ export function NewScanView() {
   // null = untouched: default to every non-excluded CIDR range.
   const [picked, setPicked] = React.useState<Set<string> | null>(null);
   const [filter, setFilter] = React.useState("");
+  const [typeFilter, setTypeFilter] = React.useState<TargetType | "">("");
+  const [tagFilter, setTagFilter] = React.useState<Set<string>>(new Set());
   const [profileId, setProfileId] = React.useState("p-1");
   const [start, setStart] = React.useState<"now" | "window" | "test">("now");
   const [testSeconds, setTestSeconds] = React.useState(25);
@@ -72,7 +102,7 @@ export function NewScanView() {
   const [name, setName] = React.useState(`Skan doraźny ${fmtDate(new Date().toISOString())}`);
   const [pending, setPending] = React.useState(false);
 
-  const targets = useQuery({ queryKey: ["targets", "all"], queryFn: () => api.targets.list({ page_size: 500, sort: "-criticality_rank,value" }) });
+  const targets = useQuery({ queryKey: ["targets", "all"], queryFn: allTargets });
   const profiles = useQuery({ queryKey: ["profiles"], queryFn: api.profiles.list });
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings.get });
 
@@ -97,7 +127,29 @@ export function NewScanView() {
     setStep(s);
     setMaxStep((m) => Math.max(m, s));
   };
-  const items = (targets.data?.items ?? []).filter((t) => !filter || t.value.includes(filter.toLowerCase()) || (t.name ?? "").toLowerCase().includes(filter.toLowerCase()));
+  const all = React.useMemo(() => targets.data?.items ?? [], [targets.data]);
+  const tagCounts = React.useMemo(() => {
+    const m = new Map<string, number>();
+    for (const t of all) for (const g of t.tags) m.set(g, (m.get(g) ?? 0) + 1);
+    return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [all]);
+  const needle = filter.trim().toLowerCase();
+  // Tags combine with OR: picking #wydzial-a and #wydzial-b lists both groups, which is how scan sets are built.
+  const items = all.filter(
+    (t) =>
+      (!needle || t.value.includes(needle) || (t.name ?? "").toLowerCase().includes(needle) || t.tags.some((g) => g.includes(needle))) &&
+      (!typeFilter || t.type === typeFilter) &&
+      (!tagFilter.size || t.tags.some((g) => tagFilter.has(g))),
+  );
+  const filtered = !!needle || !!typeFilter || tagFilter.size > 0;
+  const visibleIds = items.filter((t) => !t.excluded).map((t) => t.id);
+  const toggleTag = (g: string) =>
+    setTagFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(g)) next.delete(g);
+      else next.add(g);
+      return next;
+    });
   const profile = profiles.data?.find((p) => p.id === profileId);
   const est = estimate.data;
 
@@ -137,9 +189,20 @@ export function NewScanView() {
               title="Cele skanowania"
               actions={
                 <div className="flex gap-2">
-                  <Button size="sm" variant="ghost" onClick={() => setSelected(new Set((targets.data?.items ?? []).filter((t) => !t.excluded).map((t) => t.id)))}>
-                    Zaznacz wszystkie
-                  </Button>
+                  {filtered ? (
+                    <>
+                      <Button size="sm" variant="ghost" onClick={() => setSelected((prev) => new Set([...prev, ...visibleIds]))}>
+                        Zaznacz widoczne ({visibleIds.length})
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setSelected((prev) => new Set([...prev].filter((id) => !visibleIds.includes(id))))}>
+                        Odznacz widoczne
+                      </Button>
+                    </>
+                  ) : (
+                    <Button size="sm" variant="ghost" onClick={() => setSelected(new Set(all.filter((t) => !t.excluded).map((t) => t.id)))}>
+                      Zaznacz wszystkie
+                    </Button>
+                  )}
                   <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
                     Wyczyść
                   </Button>
@@ -147,8 +210,42 @@ export function NewScanView() {
               }
               flush
             >
-              <div className="border-b border-line px-5 py-3">
-                <SearchInput value={filter} onChange={setFilter} placeholder="Filtruj cele…" className="w-full sm:w-72" />
+              <div className="grid gap-3 border-b border-line px-5 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <SearchInput value={filter} onChange={setFilter} placeholder="Filtruj po adresie, nazwie, tagu…" className="w-full sm:w-72" />
+                  <SimpleSelect
+                    aria-label="Typ celu"
+                    className="w-full sm:w-40"
+                    value={typeFilter}
+                    onChange={(v) => setTypeFilter(v as TargetType | "")}
+                    allLabel="Każdy typ"
+                    options={(Object.keys(TARGET_TYPE_LABEL) as TargetType[]).map((t) => ({ value: t, label: TARGET_TYPE_LABEL[t] }))}
+                  />
+                  <span className="tabular text-sm text-ink-2 sm:ml-auto">
+                    {filtered ? `Widoczne ${items.length} z ${all.length}` : countLabel(all.length, ["cel", "cele", "celów"])}, zaznaczono {selected.size}
+                  </span>
+                </div>
+                {tagCounts.length ? (
+                  <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filtr po tagach (dowolny z zaznaczonych)">
+                    <span className="mr-1 text-xs text-ink-2">Tagi:</span>
+                    {tagCounts.map(([g, n]) => (
+                      <TagToggle key={g} tag={g} count={n} pressed={tagFilter.has(g)} onToggle={() => toggleTag(g)} />
+                    ))}
+                    {filtered ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setTagFilter(new Set());
+                          setTypeFilter("");
+                          setFilter("");
+                        }}
+                      >
+                        Pokaż wszystkie
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
               <ul className="scroll-quiet max-h-[28rem] divide-y divide-line overflow-y-auto">
                 {items.map((t) => (
@@ -171,6 +268,7 @@ export function NewScanView() {
                         <span className="truncate text-xs text-ink-2">
                           {t.name ?? TARGET_TYPE_LABEL[t.type]}
                           {t.excluded ? ", wykluczony ze skanowania" : ""}
+                          {t.tags.length ? <span className="text-ink-3"> · {t.tags.map((g) => `#${g}`).join(" ")}</span> : null}
                         </span>
                       </span>
                       <span className="tabular w-32 text-right text-sm text-ink-2">{t.type === "domain" ? "domena" : countLabel(t.address_count, ["adres", "adresy", "adresów"])}</span>
@@ -178,6 +276,7 @@ export function NewScanView() {
                     </label>
                   </li>
                 ))}
+                {targets.data && !items.length ? <li className="px-5 py-6 text-sm text-ink-2">Żaden cel nie pasuje do filtrów.</li> : null}
                 {!targets.data ? (
                   <li className="grid gap-2 p-5">
                     <Skeleton className="h-8" />

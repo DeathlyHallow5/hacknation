@@ -6,17 +6,20 @@
 ## Запуск
 
 ```bash
-# секреты DefectDojo в .env (см. .env.example): DD_SECRET_KEY, DD_CREDENTIAL_AES_256_KEY,
+# секреты DefectDojo в .env (см. .env.example и README): DD_SECRET_KEY, DD_CREDENTIAL_AES_256_KEY,
 # DD_DATABASE_PASSWORD, DD_ADMIN_PASSWORD — случайные строки
-docker compose -f compose.yaml -f compose.defectdojo.yaml --profile lab --profile dojo up -d
-python scripts/defectdojo/setup.py .env          # токен, продукт, engagement → настройки ASI
+docker compose up -d                              # DefectDojo входит в общий compose.yaml
 ```
+
+Одноразовый сервис `dojo-connect` ждёт DefectDojo, получает API-токен администратора и сохраняет его в
+настройках ASI (автоэкспорт, оценка ≥ 60), затем нажимает «Testuj połączenie». Если ASI уже подключён, он ничего
+не меняет. Переподключить вручную: `python scripts/defectdojo/setup.py .env`; лог: `docker compose logs dojo-connect`.
 
 - DefectDojo: **http://localhost:8081**, логин `admin`, пароль — `DD_ADMIN_PASSWORD` из `.env`.
 - Первый запуск: ~1,7 ГБ образов, инициализация базы ~1 минута; при работе ~2–3 ГБ RAM.
-- Остановить только DefectDojo: `docker compose -f compose.yaml -f compose.defectdojo.yaml --profile dojo stop`.
+- Остановить только DefectDojo: `docker compose stop dojo-nginx dojo-uwsgi dojo-celerybeat dojo-celeryworker`.
 
-`compose.defectdojo.yaml` — официальный `docker-compose.yml` DefectDojo (релиз 3.4.304) с тремя отличиями:
+Сервисы `dojo-*` в `compose.yaml` — официальный `docker-compose.yml` DefectDojo (релиз 3.4.304) с тремя отличиями:
 образы с Docker Hub (реестр `registry.defectdojo.com` по умолчанию логирует каждую загрузку с IP),
 секреты из `.env` вместо общих значений по умолчанию, своя внутренняя сеть — наружу только nginx
 (для ядра — `http://dojo-nginx:8080`, для браузера — `http://localhost:8081`).
@@ -32,7 +35,7 @@ python scripts/defectdojo/setup.py .env          # токен, продукт, e
 | Severity | из оценки ASI: ≥80 High, ≥60 Medium, ≥40 Low, иначе Info; правило записано в описании каждой находки |
 | Автоэкспорт | «Wysyłaj automatycznie po każdym skanie»: после каждого завершённого прогона уходят его новые находки с оценкой ≥ порога; уже отправленные пропускаются; ошибки не влияют на скан |
 | История | «Historia wysyłek»: кто (или «automatycznie (po skanie)»), сколько, как, результат, ссылка; находка помечается «wysłano do DefectDojo» со ссылкой |
-| Ссылки | ведут на `DEFECTDOJO_PUBLIC_URL` (в `compose.defectdojo.yaml` — `http://localhost:8081`), а не на внутренний адрес |
+| Ссылки | ведут на `DEFECTDOJO_PUBLIC_URL` (в `compose.yaml` — `http://localhost:8081`), а не на внутренний адрес |
 
 ## Проверка (2026-11-22)
 

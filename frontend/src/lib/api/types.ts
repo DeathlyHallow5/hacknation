@@ -915,7 +915,7 @@ export interface DefectDojoExport {
 }
 
 export interface Engine {
-  name: "nmap" | "httpx" | "naabu" | "tlsx" | "nuclei";
+  name: "nmap" | "httpx" | "naabu";
   version: string | null;
   status: "ok" | "missing" | "error";
   path: string | null;

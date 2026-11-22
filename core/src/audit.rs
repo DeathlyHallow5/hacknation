@@ -1,15 +1,7 @@
 //! Audit trail (PROJECT.md §2.7, review §8.5): who did what, from where, with which result.
 //! Append-only in the database (migration 0006). Never stores passwords, tokens or bodies.
 
-use crate::api::{internal, ApiResult};
-use crate::AppState;
-use axum::{
-    extract::{Query, State},
-    Json,
-};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use sqlx::PgPool;
 use std::net::IpAddr;
 use uuid::Uuid;
@@ -91,50 +83,6 @@ pub async fn record(db: &PgPool, e: Event) {
     if let Err(err) = res {
         tracing::error!(action = %e.action, "audit write failed: {err}");
     }
-}
-
-#[derive(Deserialize)]
-pub struct AuditQuery {
-    /// Page size, 1..=500 (default 100).
-    limit: Option<i64>,
-    /// Cursor: only rows with a smaller id (`next_before` of the previous page).
-    before: Option<i64>,
-}
-
-#[derive(Serialize, sqlx::FromRow)]
-struct AuditRow {
-    id: i64,
-    at: DateTime<Utc>,
-    user_id: Option<Uuid>,
-    username: Option<String>,
-    action: String,
-    entity: String,
-    entity_id: Option<String>,
-    details: Option<Value>,
-    ip: Option<String>,
-    method: Option<String>,
-    path: Option<String>,
-    status: Option<i16>,
-    outcome: String,
-}
-
-/// `GET /api/audit?limit=&before=` — newest first, cursor-paginated by id.
-pub async fn list(State(s): State<AppState>, Query(q): Query<AuditQuery>) -> ApiResult<Value> {
-    let limit = q.limit.unwrap_or(100).clamp(1, 500);
-    let rows = sqlx::query_as::<_, AuditRow>(
-        "SELECT a.id, a.at, a.user_id, u.username, a.action, a.entity, a.entity_id, a.details,
-                host(a.ip) AS ip, a.method, a.path, a.status, a.outcome
-         FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
-         WHERE $1::bigint IS NULL OR a.id < $1
-         ORDER BY a.id DESC LIMIT $2",
-    )
-    .bind(q.before)
-    .bind(limit)
-    .fetch_all(&s.db)
-    .await
-    .map_err(internal)?;
-    let next_before = (rows.len() as i64 == limit).then(|| rows.last().map(|r| r.id)).flatten();
-    Ok(Json(json!({ "items": rows, "next_before": next_before })))
 }
 
 #[cfg(test)]

@@ -15,16 +15,13 @@ pub enum Tool {
     Nmap,
     /// Fast SYN/CONNECT port discovery for large ranges.
     Naabu,
-    /// HTTP/HTTPS fingerprint: title, status, headers, TLS, tech.
+    /// HTTP/HTTPS fingerprint: title, status, headers, TLS, tech. Signatures run on its
+    /// output in-process (signatures.rs), so no template engine is shipped.
     Httpx,
-    /// TLS certificate details.
-    Tlsx,
-    /// Signature engine — info/tech templates only, never exploits (§6.3).
-    Nuclei,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 5] = [Tool::Nmap, Tool::Naabu, Tool::Httpx, Tool::Tlsx, Tool::Nuclei];
+    pub const ALL: [Tool; 3] = [Tool::Nmap, Tool::Naabu, Tool::Httpx];
 
     pub fn binary(self) -> &'static str {
         match self {
@@ -32,8 +29,6 @@ impl Tool {
             Tool::Naabu => "naabu",
             // Installed as pd-httpx to avoid clashing with the Python httpx CLI.
             Tool::Httpx => "pd-httpx",
-            Tool::Tlsx => "tlsx",
-            Tool::Nuclei => "nuclei",
         }
     }
 

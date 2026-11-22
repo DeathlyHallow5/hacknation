@@ -9,10 +9,6 @@
 # Rust
 core/target/
 
-# Web
-web/node_modules/
-web/.next/
-
 # Downloaded scanner binaries / templates
 tools/bin/
 tools/nuclei-templates/

@@ -45,7 +45,7 @@
 `handshake_timeout`) и шлёт одну `GET / HTTP/1.0`. Без этого протокол не определить.
 
 Проверено, что чистка не ухудшила обнаружение: сценарий TestLab «сервис исчез и вернулся» — 6/6,
-`scripts/diff-demo.sh` находит новую админку (interest 3), unstable → inactive и возвращение Apache.
+сценарий диффа (теперь `scripts/e2e/lab_demo_check.py`) находит новую админку (interest 3), unstable → inactive и возвращение Apache.
 
 ## Сигнатуры с пробами путей (2026-11-22)
 

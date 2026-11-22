@@ -169,25 +169,6 @@ fn is_domain(s: &str) -> bool {
     }) && !s.rsplit('.').next().unwrap().chars().all(|c| c.is_ascii_digit())
 }
 
-/// Parse a CSV/plain-text list (one target per line, first column, `#` comments allowed).
-pub fn parse_list(text: &str) -> (Vec<Target>, Vec<(usize, InputError)>) {
-    let mut ok = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    let mut errors = Vec::new();
-    for (i, line) in text.lines().enumerate() {
-        let first = line.split([',', ';', '\t']).next().unwrap_or("").trim().trim_matches('"').trim();
-        if first.is_empty() || first.starts_with('#') {
-            continue;
-        }
-        match normalize(first) {
-            Ok(t) if seen.insert(t.value.clone()) => ok.push(t),
-            Ok(_) => {}
-            Err(e) => errors.push((i + 1, e)),
-        }
-    }
-    (ok, errors)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,13 +235,5 @@ mod tests {
     #[test]
     fn rejects_huge_ipv6() {
         assert_eq!(normalize("fd00::/64"), Err(InputError::TooBroad(64, 104)));
-    }
-
-    #[test]
-    fn list_dedups_and_reports_lines() {
-        let (ok, err) = parse_list("# header\n10.0.0.1,web\n\"10.0.0.1\"\nfoo..bar\nexample.org");
-        assert_eq!(ok.len(), 2);
-        assert_eq!(err.len(), 1);
-        assert_eq!(err[0].0, 4);
     }
 }

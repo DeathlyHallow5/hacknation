@@ -1140,8 +1140,6 @@ export function createDB(): MockDB {
     { name: "nmap", version: "7.97", status: "ok", path: "/usr/bin/nmap", purpose: "Wykrywanie hostów i identyfikacja usług (-sn, -sV)", last_used_at: anchorIso },
     { name: "naabu", version: "2.3.5", status: "ok", path: "/usr/local/bin/naabu", purpose: "Szybkie skanowanie portów (SYN)", last_used_at: anchorIso },
     { name: "httpx", version: "1.7.1", status: "ok", path: "/usr/local/bin/httpx", purpose: "Odcisk HTTP/HTTPS: tytuł, nagłówki, technologie", last_used_at: anchorIso },
-    { name: "tlsx", version: "1.2.0", status: "ok", path: "/usr/local/bin/tlsx", purpose: "Certyfikaty i parametry TLS", last_used_at: anchorIso },
-    { name: "nuclei", version: "3.4.10", status: "ok", path: "/usr/local/bin/nuclei", purpose: "Sygnatury (wyłącznie szablony informacyjne)", last_used_at: anchorIso },
   ];
 
   return {

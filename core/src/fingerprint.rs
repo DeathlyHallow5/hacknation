@@ -33,11 +33,12 @@ pub fn is_admin(url: &str, title: Option<&str>) -> bool {
 }
 
 /// Token match on hostname labels (so "devices.example.com" is not "dev"), plus title hints.
+/// The top-level domain is not a hint: `.test` and `.dev` are zones, not environments.
 pub fn is_staging(host: &str, title: Option<&str>) -> bool {
     let host = host.to_lowercase();
-    let by_host = host
-        .split(['.', '-', '_'])
-        .any(|tok| STAGING_TOKENS.contains(&tok));
+    let labels: Vec<&str> = host.trim_end_matches('.').split('.').collect();
+    let names = if labels.len() > 1 { &labels[..labels.len() - 1] } else { &labels[..] };
+    let by_host = names.iter().flat_map(|l| l.split(['-', '_'])).any(|tok| STAGING_TOKENS.contains(&tok));
     let title = title.unwrap_or("").to_lowercase();
     by_host || ["staging", "test environment", "środowisko testowe", "development server"]
         .iter()
@@ -62,6 +63,8 @@ mod tests {
         assert!(is_staging("app-staging.example.com", None));
         assert!(is_staging("dev.example.com", None));
         assert!(!is_staging("devices.example.com", None));
+        assert!(!is_staging("dvwa.asi.test", None) && !is_staging("app.example.dev", None), "TLD is not a hint");
+        assert!(is_staging("admin.staging.asi.test", None) && is_staging("test.example.com", None));
     }
 }
 

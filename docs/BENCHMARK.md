@@ -149,7 +149,7 @@
 
 Сеть бенчмарка должна быть разрешена политикой: в `.env` добавьте
 `ASI_ALLOWED_CIDRS=172.30.0.0/24,10.77.0.0/18` и поднимите стек с доступом к API
-(`docker compose -f compose.yaml -f compose.api.yaml --profile lab up -d`). Порты профиля бенчмарка — из
+(`docker compose -f compose.yaml -f compose.api.yaml up -d`). Порты профиля бенчмарка — из
 `ASI_ALLOWED_PORTS` по умолчанию.
 
 ```bash

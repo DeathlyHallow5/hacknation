@@ -1,3 +1,4 @@
+# TestLab proxy stack (compose.yaml, profile testlab): Traefik → Toxiproxy (latency etc.) → WordPress.
 http:
   routers:
     wordpress:
@@ -10,4 +11,4 @@ http:
     wordpress-service:
       loadBalancer:
         servers:
-          - url: "http://toxiproxy:8666"
+          - url: "http://tl-toxiproxy:8666"

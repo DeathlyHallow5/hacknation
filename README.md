@@ -46,14 +46,17 @@ flowchart LR
 
 Нужен только **Docker** (Docker Desktop на Windows/macOS или Docker Engine + Compose на Linux), ~4 ГБ RAM.
 
-**1. Настройки** — создайте `.env` с ключом шифрования и паролем первого администратора.
+**1. Настройки** — создайте `.env` со случайными ключами и паролями (ASI и DefectDojo).
 
 Windows (PowerShell):
 
 ```powershell
 Copy-Item .env.example .env
 function New-Secret($n) { $b = New-Object byte[] $n; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b) }
-(Get-Content .env) -replace '^ASI_DATA_KEY=.*', "ASI_DATA_KEY=$(New-Secret 32)" -replace '^ASI_ADMIN_PASSWORD=.*', "ASI_ADMIN_PASSWORD=$(New-Secret 18)" | Set-Content .env -Encoding ascii
+function New-Hex($n) { $b = New-Object byte[] $n; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); -join ($b | ForEach-Object { '{0:x2}' -f $_ }) }
+(Get-Content .env) -replace '^ASI_DATA_KEY=.*', "ASI_DATA_KEY=$(New-Secret 32)" -replace '^ASI_ADMIN_PASSWORD=.*', "ASI_ADMIN_PASSWORD=$(New-Secret 18)" `
+  -replace '^DD_SECRET_KEY=.*', "DD_SECRET_KEY=$(New-Hex 32)" -replace '^DD_CREDENTIAL_AES_256_KEY=.*', "DD_CREDENTIAL_AES_256_KEY=$(New-Hex 16)" `
+  -replace '^DD_DATABASE_PASSWORD=.*', "DD_DATABASE_PASSWORD=$(New-Hex 16)" -replace '^DD_ADMIN_PASSWORD=.*', "DD_ADMIN_PASSWORD=$(New-Hex 12)" | Set-Content .env -Encoding ascii
 ```
 
 Linux / macOS:
@@ -62,23 +65,32 @@ Linux / macOS:
 cp .env.example .env
 sed -i "s|^ASI_DATA_KEY=.*|ASI_DATA_KEY=$(openssl rand -base64 32)|" .env
 sed -i "s|^ASI_ADMIN_PASSWORD=.*|ASI_ADMIN_PASSWORD=$(openssl rand -base64 18)|" .env
+sed -i "s|^DD_SECRET_KEY=.*|DD_SECRET_KEY=$(openssl rand -hex 32)|; s|^DD_CREDENTIAL_AES_256_KEY=.*|DD_CREDENTIAL_AES_256_KEY=$(openssl rand -hex 16)|" .env
+sed -i "s|^DD_DATABASE_PASSWORD=.*|DD_DATABASE_PASSWORD=$(openssl rand -hex 16)|; s|^DD_ADMIN_PASSWORD=.*|DD_ADMIN_PASSWORD=$(openssl rand -hex 12)|" .env
 ```
 
 По умолчанию сканировать можно только лабу `172.30.0.0/24` и 8 портов (22, 80, 443, 3306, 5432, 6379, 8080, 8443).
 Свои сети и порты — переменные `ASI_ALLOWED_CIDRS` и `ASI_ALLOWED_PORTS` в `.env` (см. `.env.example`).
 
-**2. Запуск** — база, ядро, панель и тестовая лаба:
+**2. Запуск** — один `compose.yaml` поднимает всё: базу, ядро, панель, DefectDojo и тестовую лабу.
 
 ```bash
-docker compose --profile lab up -d --build
+docker compose up -d --build
 ```
 
-Первая сборка занимает 5–10 минут. Если Docker Hub отвечает `429 Too Many Requests`, соберите через зеркало:
-`ASI_BASE_REGISTRY=mirror.gcr.io/library docker compose --profile lab up -d --build`.
+Первая сборка занимает 5–10 минут, первый старт DefectDojo (миграции) — ещё 2–3 минуты; затем ASI сам
+подключается к нему (сервис `dojo-connect`). Если Docker Hub отвечает `429 Too Many Requests`, соберите через
+зеркало: `ASI_BASE_REGISTRY=mirror.gcr.io/library docker compose up -d --build`.
 
-**3. Вход** — откройте **http://localhost:3000**, логин `admin`, пароль — `ASI_ADMIN_PASSWORD` из `.env`.
+**3. Вход**
 
-Остановить: `docker compose --profile lab --profile lab2 down` (данные остаются в томе `asi_db-data`).
+| Что | Адрес | Логин | Пароль |
+|---|---|---|---|
+| Панель ASI | http://localhost:3000 | `admin` | `ASI_ADMIN_PASSWORD` из `.env` |
+| DefectDojo | http://localhost:8081 | `admin` | `DD_ADMIN_PASSWORD` из `.env` |
+
+Дополнительно: `docker compose --profile testlab up -d` — большая лаба TestLab (см. ниже).
+Остановить всё: `docker compose --profile testlab --profile lab2 down` (данные остаются в томах).
 
 ## Проверка на лабе через веб-интерфейс
 
@@ -98,7 +110,7 @@ docker compose --profile lab up -d --build
 4. **Измените инфраструктуру** — выключите Apache и поднимите новый хост с «админкой на staging»:
 
    ```bash
-   docker compose --profile lab stop lab-httpd
+   docker compose stop lab-httpd
    docker compose --profile lab2 up -d lab-admin
    ```
 
@@ -108,8 +120,31 @@ docker compose --profile lab up -d --build
 6. Дополнительно: поправьте владельца или теги хоста и пересканируйте — правка останется; создайте
    свою роль в **Administracja → Role** и войдите пользователем с ней; выгрузите результаты в JSON/CSV.
 
-Вернуть лабу в исходное состояние: `docker compose --profile lab start lab-httpd` и
+Вернуть лабу в исходное состояние: `docker compose start lab-httpd` и
 `docker compose --profile lab2 stop lab-admin`.
+
+### TestLab — большая лаба
+
+`docker compose --profile testlab up -d` добавляет в ту же изолированную сеть стенды команды (несколько ГБ образов,
+без портов на хосте — их видит только сканер). Цель для скана — `172.30.0.16/28` и `172.30.0.32/28` или
+вся `172.30.0.0/24`; порты вроде 21, 3000, 5672, 15672 сканируются после добавления в `ASI_ALLOWED_PORTS`.
+
+| Адрес | Домен | Сервис |
+|---|---|---|
+| `.20` / `.21` | `wp.asi.test` / `db.asi.test` | WordPress 6 + MariaDB 11 |
+| `.22` | `pma.asi.test` | phpMyAdmin |
+| `.23` | `redis.asi.test` | Redis 7 (без пароля) |
+| `.24` | `proxy.asi.test` | Nginx Proxy Manager (80/81/443) |
+| `.25` / `.26` | `traefik.asi.test` | Traefik (дашборд :8080) → Toxiproxy (задержка `TL_LATENCY_MS`) → WordPress |
+| `.30` / `.31` | `old.asi.test` | устаревший WordPress 4.7 + MySQL 5.7 |
+| `.32` | `adminer.asi.test` | Adminer |
+| `.33` | `ftp.asi.test` | vsftpd (FTP, 21) |
+| `.34` | `dvwa.asi.test` | DVWA (уязвимое веб-приложение) |
+| `.40` | `api.asi.test` | httpbin |
+| `.41` | — | PostgreSQL 16 |
+| `.42` | `mq.asi.test` | RabbitMQ + панель (5672/15672) |
+| `.43` | `git.asi.test` | Gitea (3000) |
+| `.44` | `app.asi.test` | nginx |
 
 ## Границы сканирования и остановка
 
@@ -124,21 +159,18 @@ docker compose --profile lab up -d --build
   не стартуют, пока файл не удалят.
 - Ядро и база живут во внутренних сетях Docker без выхода наружу; наружу опубликован только порт панели.
   Скриптам из `scripts/`, которым нужен API ядра на `127.0.0.1:8000`, — оверрайд
-  `docker compose -f compose.yaml -f compose.api.yaml --profile lab up -d` (только для разработки).
+  `docker compose -f compose.yaml -f compose.api.yaml up -d` (только для разработки).
 - Шаблон для боевого развёртывания (HTTPS-прокси, секреты из файлов, образы по digest) —
   `compose.production.yaml` и [deploy/SECURITY.md](deploy/SECURITY.md); проверка в изолированной лаборатории —
   [docs/SECURITY-LAB-2026-11-22.md](docs/SECURITY-LAB-2026-11-22.md).
 
 ## DefectDojo
 
-Локальная инстанция DefectDojo и подключение к ней одной командой:
+Локальный DefectDojo входит в общий `compose.yaml` и подключается к ASI сам при первом старте (сервис
+`dojo-connect`; если настройки уже есть — ничего не меняет). Переподключить вручную:
+`python scripts/defectdojo/setup.py .env`.
 
-```bash
-docker compose -f compose.yaml -f compose.defectdojo.yaml --profile lab --profile dojo up -d
-python scripts/defectdojo/setup.py .env
-```
-
-DefectDojo откроется на http://localhost:8081 (`admin` / `DD_ADMIN_PASSWORD` из `.env`). Продукт и engagement
+DefectDojo открывается на http://localhost:8081 (`admin` / `DD_ADMIN_PASSWORD` из `.env`). Продукт и engagement
 ASI создаёт сам; находки уходят автоматически после каждого скана (оценка ≥ 60) или вручную из «Znaleziska» —
 как находки или как файлы-доказательства. Подробности и проверка — [docs/DEFECTDOJO.md](docs/DEFECTDOJO.md).
 
@@ -175,7 +207,6 @@ ASI создаёт сам; находки уходят автоматическ�
 | [docs/NOISE.md](docs/NOISE.md) | сколько трафика сканер создаёт у цели и как его сократили |
 | [docs/DEFECTDOJO.md](docs/DEFECTDOJO.md) | локальный DefectDojo, как устроен экспорт и что проверено |
 | [docs/DEMO-VIDEO.md](docs/DEMO-VIDEO.md) | сценарий демо-видео |
-| [HANDOFF.md](HANDOFF.md) | для разработчиков: где остановились и как продолжить |
 
 ## Разработка
 
@@ -185,12 +216,12 @@ cd core && cargo test                         # тесты ядра
 cd frontend && npm ci && npm run dev          # панель на встроенных демо-данных (ASI_API_MODE=mock)
 ```
 
-Скрипты `scripts/*.sh` и бенчмарк ходят в API ядра напрямую — поднимайте стек с `compose.api.yaml`
-(см. выше), а для бенчмарка добавьте его сеть в `ASI_ALLOWED_CIDRS`.
+Проверки «от начала до конца» ходят через панель, как браузер: `python -I -X utf8 scripts/e2e/api_check.py .env`
+(а также `roles_check`, `scope_check`, `start_now_check`, `signatures_domains_check`, `defectdojo_check`,
+`lab_demo_check`). Для бенчмарка (`scripts/bench/`) добавьте его сеть в `ASI_ALLOWED_CIDRS`.
 
 Панель умеет работать без ядра (`ASI_API_MODE=mock`), с ядром (`proxy`, так в Docker) или смешанно (`hybrid`) —
-см. [docs/API-CONTRACT.md](docs/API-CONTRACT.md). Скрипты для лабы без панели — `scripts/lab-scan.sh`,
-`scripts/diff-demo.sh`; бенчмарк — `scripts/bench/`.
+см. [docs/API-CONTRACT.md](docs/API-CONTRACT.md).
 
 Работа ведётся в ветке `dev`; `main` — стабильная версия.
 

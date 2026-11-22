@@ -10,7 +10,6 @@ mod engine;
 mod fingerprint;
 mod history;
 mod input;
-mod overlay;
 mod parse;
 mod pipeline;
 mod rbac;

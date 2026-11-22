@@ -205,8 +205,6 @@ pub async fn engines(State(s): State<AppState>) -> V1<Json<Vec<Value>>> {
             }
             Tool::Naabu => ("naabu", "Szybkie skanowanie portów (connect, z limitem tempa)", &["-version"]),
             Tool::Httpx => ("httpx", "Odcisk HTTP/HTTPS: tytuł, nagłówki, TLS, technologie", &["-version"]),
-            Tool::Tlsx => ("tlsx", "Certyfikaty i parametry TLS", &["-version"]),
-            Tool::Nuclei => ("nuclei", "Zainstalowany; sygnatury ASI działają bez niego (tylko dane pasywne)", &["-version"]),
         };
         let path = t.resolve(&s.config.tools_dir);
         let version = match &path {
@@ -797,7 +795,7 @@ const DOJO_PRODUCT: &str = "ASI — CBI AGH";
 const DOJO_ENGAGEMENT: &str = "ASI — skanowanie ciągłe";
 
 /// Base of the links shown in the dashboard. The core may reach DefectDojo under an internal
-/// name (compose.defectdojo.yaml: http://dojo-nginx:8080) the browser cannot open, so
+/// name (compose.yaml: http://dojo-nginx:8080) the browser cannot open, so
 /// DEFECTDOJO_PUBLIC_URL (e.g. http://localhost:8081) takes precedence.
 fn dojo_link_base(url: &str) -> String {
     std::env::var("DEFECTDOJO_PUBLIC_URL")

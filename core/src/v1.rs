@@ -99,9 +99,17 @@ pub(crate) fn file(content_type: &str, filename: &str, body: Vec<u8>, note: Note
         .into_response()
 }
 
-/// Trimmed text or None; length and control characters checked.
+/// Trimmed text, `None` when empty; rejects over-long values and control characters
+/// (newlines/tabs allowed only in multi-line fields).
 pub(crate) fn text(v: Option<&str>, field: &str, max: usize, multiline: bool) -> V1<Option<String>> {
-    crate::overlay::text(v, field, max, multiline).map_err(|(_, Json(b))| invalid(b["detail"].as_str().unwrap_or(field).to_string()))
+    let Some(v) = v.map(str::trim).filter(|v| !v.is_empty()) else { return Ok(None) };
+    if v.chars().count() > max {
+        return Err(invalid(format!("{field} is longer than {max} characters")));
+    }
+    if v.chars().any(|c| c.is_control() && !(multiline && matches!(c, '\n' | '\r' | '\t'))) {
+        return Err(invalid(format!("{field} contains control characters")));
+    }
+    Ok(Some(v.to_string()))
 }
 
 const CRITICALITY: [&str; 4] = ["low", "medium", "high", "critical"];

@@ -34,6 +34,7 @@ pub enum Action {
 }
 
 impl Action {
+    #[cfg(test)]
     pub const ALL: [Action; 9] = [
         Action::Read,
         Action::ReadEvidence,
@@ -69,11 +70,6 @@ impl Role {
     pub fn default_execute_flag(self) -> bool {
         matches!(self, Role::Admin | Role::Editor)
     }
-
-    /// The flag as stored: viewers can never execute scans.
-    pub fn execute_flag(self, requested: bool) -> bool {
-        self != Role::Viewer && requested
-    }
 }
 
 /// Who may call a route.
@@ -92,39 +88,9 @@ use Rule::{Authenticated, Public, Requires};
 
 /// (method, axum route template, rule) for every route of `api::router`. Deny by default:
 /// a matched route missing here is admin-only and logged (`auth::gate`). Handlers add
-/// finer checks: `POST /api/scans` with `start` also needs ExecuteScan, evidence in
-/// findings/diff needs ReadEvidence, enabling or retuning a scheduled scan needs ExecuteScan.
+/// finer checks (evidence needs ReadEvidence, starting or retuning scans needs ExecuteScan).
 pub const ROUTES: &[(&str, &str, Rule)] = &[
     ("GET", "/api/health", Public),
-    ("POST", "/api/auth/login", Public),
-    ("POST", "/api/auth/logout", Authenticated),
-    ("GET", "/api/auth/me", Authenticated),
-    ("GET", "/api/tools", Requires(Read)),
-    ("GET", "/api/targets", Requires(Read)),
-    ("POST", "/api/targets", Requires(Create)),
-    ("PATCH", "/api/targets/{id}", Requires(Update)),
-    ("DELETE", "/api/targets/{id}", Requires(Delete)),
-    ("GET", "/api/scans", Requires(Read)),
-    ("POST", "/api/scans", Requires(Create)),
-    ("GET", "/api/scans/{id}", Requires(Read)),
-    ("PATCH", "/api/scans/{id}", Requires(Update)),
-    ("DELETE", "/api/scans/{id}", Requires(Delete)),
-    ("POST", "/api/scans/{id}/run", Requires(ExecuteScan)),
-    ("GET", "/api/scans/{id}/runs", Requires(Read)),
-    ("GET", "/api/scans/{id}/annotations", Requires(Read)),
-    ("PUT", "/api/scans/{id}/annotations", Requires(Update)),
-    ("DELETE", "/api/scans/{id}/annotations/{annotation_id}", Requires(Delete)),
-    ("GET", "/api/scans/{id}/annotations/{annotation_id}/history", Requires(Read)),
-    ("GET", "/api/runs/{id}", Requires(Read)),
-    ("GET", "/api/runs/{id}/findings", Requires(Read)),
-    ("GET", "/api/runs/{id}/diff", Requires(Read)),
-    ("POST", "/api/runs/{id}/cancel", Requires(ExecuteScan)),
-    ("GET", "/api/users", Requires(ManageUsers)),
-    ("POST", "/api/users", Requires(ManageUsers)),
-    ("PATCH", "/api/users/{id}", Requires(ManageUsers)),
-    ("DELETE", "/api/users/{id}", Requires(ManageUsers)),
-    ("GET", "/api/audit", Requires(ReadAudit)),
-    // Dashboard contract (/api/v1, v1.rs).
     ("POST", "/api/v1/auth/login", Public),
     ("POST", "/api/v1/auth/logout", Authenticated),
     ("GET", "/api/v1/auth/me", Authenticated),
@@ -380,22 +346,20 @@ mod tests {
     fn execute_flag_defaults() {
         assert!(Role::Admin.default_execute_flag() && Role::Editor.default_execute_flag());
         assert!(!Role::Modifier.default_execute_flag() && !Role::Viewer.default_execute_flag());
-        assert!(!Role::Viewer.execute_flag(true), "viewers never execute scans");
-        assert!(Role::Modifier.execute_flag(true));
     }
 
     #[test]
     fn route_table() {
         let public: Vec<_> = ROUTES.iter().filter(|r| r.2 == Public).map(|r| (r.0, r.1)).collect();
-        assert_eq!(public, [("GET", "/api/health"), ("POST", "/api/auth/login"), ("POST", "/api/v1/auth/login")]);
+        assert_eq!(public, [("GET", "/api/health"), ("POST", "/api/v1/auth/login")]);
         for (i, (m, p, _)) in ROUTES.iter().enumerate() {
             assert!(["GET", "POST", "PUT", "PATCH", "DELETE"].contains(m), "{m} {p}");
             assert!(p.starts_with("/api/"), "{p}");
             assert!(!ROUTES[..i].iter().any(|(m2, p2, _)| m2 == m && p2 == p), "duplicate {m} {p}");
         }
-        assert_eq!(rule("HEAD", "/api/scans"), Some(Requires(Read)));
-        assert_eq!(rule("POST", "/api/scans/{id}/run"), Some(Requires(ExecuteScan)));
-        assert_eq!(rule("GET", "/api/runs/{id}/export"), None, "unknown routes are not guessed");
+        assert_eq!(rule("HEAD", "/api/v1/scans"), Some(Requires(Read)));
+        assert_eq!(rule("POST", "/api/v1/scans/{id}/{action}"), Some(Requires(ExecuteScan)));
+        assert_eq!(rule("GET", "/api/scans"), None, "the old API is gone, unknown routes are not guessed");
         assert_eq!(rule("DELETE", "/api/health"), None);
     }
     #[test]
