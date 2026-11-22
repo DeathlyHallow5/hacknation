@@ -25,7 +25,7 @@ use chrono::{DateTime, Utc};
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
 const MAX_CONDITIONS: usize = 20;
@@ -665,7 +665,8 @@ pub async fn seed_builtin(db: &sqlx::PgPool) -> anyhow::Result<usize> {
     Ok(list.len())
 }
 
-/// A signature hit in the latest run of a scan, for derived findings.
+/// A signature hit of a finished run, for derived findings (evidence loaded separately,
+/// only for the observations that are shown: `hit_evidence`).
 pub struct Hit {
     pub service_id: Uuid,
     pub signature_id: Uuid,
@@ -675,10 +676,10 @@ pub struct Hit {
     pub score_weight: i32,
     pub url: Option<String>,
     pub version: Option<String>,
-    pub evidence: Vec<String>,
 }
 
-pub async fn latest_hits(db: &sqlx::PgPool, key: &str) -> sqlx::Result<Vec<Hit>> {
+/// Hits of enabled signatures in every finished run.
+pub async fn finished_hits(db: &sqlx::PgPool) -> sqlx::Result<Vec<Hit>> {
     #[derive(sqlx::FromRow)]
     struct Row {
         service_id: Uuid,
@@ -689,23 +690,18 @@ pub async fn latest_hits(db: &sqlx::PgPool, key: &str) -> sqlx::Result<Vec<Hit>>
         score_weight: i32,
         url: Option<String>,
         version: Option<String>,
-        evidence: Option<String>,
     }
-    let rows: Vec<Row> =
-        sqlx::query_as(
-            "WITH latest AS (SELECT DISTINCT ON (scan_id) id, scan_id FROM scan_runs
-                 WHERE status IN ('done', 'partial') ORDER BY scan_id, started_at DESC)
-             SELECT h.service_id, s.id AS signature_id, s.name, s.category, s.technology, s.score_weight, h.url,
-                    h.extracted_version AS version, pgp_sym_decrypt(h.evidence_enc, $1) AS evidence
-             FROM signature_hits h JOIN latest l ON l.id = h.run_id JOIN signatures s ON s.id = h.signature_id
-             WHERE s.enabled",
-        )
-        .bind(key)
-        .fetch_all(db)
-        .await?;
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT h.service_id, s.id AS signature_id, s.name, s.category, s.technology, s.score_weight, h.url,
+                h.extracted_version AS version
+         FROM signature_hits h JOIN scan_runs r ON r.id = h.run_id JOIN signatures s ON s.id = h.signature_id
+         WHERE s.enabled AND r.status IN ('done', 'partial')",
+    )
+    .fetch_all(db)
+    .await?;
     Ok(rows
         .into_iter()
-        .map(|Row { service_id, signature_id, name, category, technology, score_weight, url, version, evidence: ev }| Hit {
+        .map(|Row { service_id, signature_id, name, category, technology, score_weight, url, version }| Hit {
             service_id,
             signature_id,
             name,
@@ -714,8 +710,25 @@ pub async fn latest_hits(db: &sqlx::PgPool, key: &str) -> sqlx::Result<Vec<Hit>>
             score_weight,
             url,
             version,
-            evidence: ev.and_then(|e| serde_json::from_str(&e).ok()).unwrap_or_default(),
         })
+        .collect())
+}
+
+/// Decrypted evidence of the given (signature, service) hits.
+pub async fn hit_evidence(db: &sqlx::PgPool, key: &str, hits: &[(Uuid, Uuid)]) -> sqlx::Result<HashMap<(Uuid, Uuid), Vec<String>>> {
+    let (sigs, services): (Vec<Uuid>, Vec<Uuid>) = hits.iter().copied().unzip();
+    let rows: Vec<(Uuid, Uuid, Option<String>)> = sqlx::query_as(
+        "SELECT h.signature_id, h.service_id, pgp_sym_decrypt(h.evidence_enc, $1)
+         FROM signature_hits h JOIN UNNEST($2::uuid[], $3::uuid[]) AS w(sig, svc) ON w.sig = h.signature_id AND w.svc = h.service_id",
+    )
+    .bind(key)
+    .bind(&sigs)
+    .bind(&services)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(sig, svc, ev)| ((sig, svc), ev.and_then(|e| serde_json::from_str(&e).ok()).unwrap_or_default()))
         .collect())
 }
 

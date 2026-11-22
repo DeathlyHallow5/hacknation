@@ -99,6 +99,12 @@ impl Coverage {
             && !self.failed.contains(ip)
             && hostname.is_none_or(|h| !self.failed.contains(h))
     }
+
+    /// Was this DNS name itself a target (so its virtual host was probed by name)?
+    pub fn has_domain(&self, name: &str) -> bool {
+        self.targets.iter().any(|t| t.kind == input::TargetKind::Domain && t.value.eq_ignore_ascii_case(name))
+            && !self.failed.contains(name)
+    }
 }
 
 /// Addresses of either run that are not covered by both.

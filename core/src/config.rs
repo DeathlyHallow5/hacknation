@@ -105,8 +105,11 @@ impl Config {
             return self.permits_domain(target);
         };
         let prohibited = ["0.0.0.0/8","127.0.0.0/8","169.254.0.0/16","224.0.0.0/4","240.0.0.0/4"];
+        // A network that merely CONTAINS an excluded range is allowed: the run subtracts
+        // `excluded_cidrs` from its inputs (`input::with_exclusions`), and every address of
+        // every batch is checked here again before any tool sees it (`run_batch`).
         self.allowed_cidrs.iter().any(|allow| allow.contains(&net))
-            && !self.excluded_cidrs.iter().any(|deny| deny.contains(&net) || net.contains(deny))
+            && !self.excluded_cidrs.iter().any(|deny| deny.contains(&net))
             && !prohibited.iter().map(|s| s.parse::<Ipv4Net>().expect("static network")).any(|deny| deny.contains(&net) || net.contains(&deny))
     }
 
@@ -244,6 +247,10 @@ mod scope_tests {
         cfg.allowed_domains.push("asi.test".into());
         assert!(cfg.permits_target("www.asi.test") && cfg.permits_target("ASI.test") && cfg.permits_target("a.b.asi.test"));
         assert!(!cfg.permits_target("evilasi.test") && !cfg.permits_target("asi.test.evil.com") && !cfg.permits_target("-x.asi.test"));
+        cfg.excluded_cidrs.push("172.30.0.8/29".parse().unwrap());
+        assert!(!cfg.permits_target("172.30.0.11"), "address inside ASI_EXCLUDED_CIDRS");
+        assert!(!cfg.permits_target("172.30.0.8/30"), "network inside ASI_EXCLUDED_CIDRS");
+        assert!(cfg.permits_target("172.30.0.0/28"), "containing network: scanned minus the excluded range");
         cfg.allowed_cidrs.push("0.0.0.0/0".parse().unwrap());
         for forbidden in ["127.0.0.1","169.254.169.254","224.0.0.1","127.0.0.0/7","::1"] {
             assert!(!cfg.permits_target(forbidden));

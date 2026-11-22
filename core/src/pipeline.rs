@@ -240,6 +240,19 @@ struct RunRow {
     config_snapshot: sqlx::types::Json<ScanConfig>,
 }
 
+/// Networks no run may scan: every target marked `excluded` (the "no-scan list") plus the
+/// administrator's `ASI_EXCLUDED_CIDRS`.
+pub(crate) async fn excluded_networks(state: &AppState) -> sqlx::Result<Vec<ipnet::IpNet>> {
+    let values: Vec<String> = sqlx::query_scalar("SELECT value FROM targets WHERE excluded AND kind <> 'domain'")
+        .fetch_all(&state.db)
+        .await?;
+    Ok(values
+        .iter()
+        .filter_map(|v| input::as_net(v))
+        .chain(state.config.excluded_cidrs.iter().copied().map(ipnet::IpNet::V4))
+        .collect())
+}
+
 /// `ports` validation shared with the API.
 pub fn valid_ports(spec: &str) -> bool {
     matches!(spec, "100" | "1000" | "full")
@@ -267,12 +280,31 @@ enum Outcome {
 pub async fn execute_run(state: AppState, run_id: Uuid) -> Result<()> {
     let db = &state.db;
     // Freeze targets and scan settings once per run (F-07): edits apply to the next run.
+    // Excluded targets and ASI_EXCLUDED_CIDRS are subtracted from the address set here, so
+    // an excluded address inside a scanned range never reaches a batch (nor its coverage).
+    let frozen: bool = sqlx::query_scalar("SELECT target_snapshot IS NOT NULL FROM scan_runs WHERE id = $1")
+        .bind(run_id)
+        .fetch_one(db)
+        .await?;
+    if !frozen {
+        let selected: Vec<(input::TargetKind, String)> = sqlx::query_as(
+            "SELECT t.kind, t.value FROM scan_runs r JOIN scan_targets st ON st.scan_id = r.scan_id
+             JOIN targets t ON t.id = st.target_id
+             WHERE r.id = $1 AND NOT t.excluded ORDER BY t.value",
+        )
+        .bind(run_id)
+        .fetch_all(db)
+        .await?;
+        let targets: Vec<Target> = selected.into_iter().map(|(kind, value)| Target { kind, value, except: Vec::new() }).collect();
+        let targets = input::with_exclusions(targets, &excluded_networks(&state).await?);
+        sqlx::query("UPDATE scan_runs SET target_snapshot = $2 WHERE id = $1 AND target_snapshot IS NULL")
+            .bind(run_id)
+            .bind(sqlx::types::Json(&targets))
+            .execute(db)
+            .await?;
+    }
     sqlx::query(
         "UPDATE scan_runs r SET
-             target_snapshot = COALESCE(r.target_snapshot, (
-                 SELECT COALESCE(jsonb_agg(jsonb_build_object('kind', t.kind, 'value', t.value) ORDER BY t.value), '[]'::jsonb)
-                 FROM scan_targets st JOIN targets t ON t.id = st.target_id
-                 WHERE st.scan_id = r.scan_id AND NOT t.excluded)),
              config_snapshot = COALESCE(r.config_snapshot, (
                  SELECT to_jsonb(c) FROM (SELECT inactive_after_misses, rate_limit_pps, window_minutes,
                      repeat_every_minutes, ports, batch_size, preflight, window_start::text AS window_start,

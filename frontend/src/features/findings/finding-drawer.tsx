@@ -15,7 +15,7 @@ import { SimpleSelect } from "@/components/ui/select";
 import { errorMessage } from "@/lib/api/client";
 import { api } from "@/lib/api/endpoints";
 import type { Evidence, Finding, FindingStatus } from "@/lib/api/types";
-import { fmtSmart } from "@/lib/format";
+import { countLabel, fmtSmart } from "@/lib/format";
 import { useApiMutation } from "@/lib/hooks";
 import { FINDING_CATEGORY_LABEL, FINDING_STATUS_LABEL } from "@/lib/labels";
 import { useCan } from "@/lib/session";
@@ -198,6 +198,9 @@ export function FindingDrawer({ id, onOpenChange }: { id: string | null; onOpenC
                 <div className="grid content-start gap-1">
                   <dt className="text-xs text-ink-2">Pierwsze wykrycie</dt>
                   <dd className="text-sm">{fmtSmart(f.first_seen)}</dd>
+                  <dd className="text-xs text-ink-2">
+                    ostatnio {fmtSmart(f.last_seen)}, w {countLabel(f.occurrences, ["skanie", "skanach", "skanach"])}
+                  </dd>
                 </div>
               </dl>
 

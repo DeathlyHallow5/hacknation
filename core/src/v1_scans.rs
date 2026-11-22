@@ -212,6 +212,11 @@ fn nmap_top_ports() -> Option<&'static [u16]> {
     .as_deref()
 }
 
+/// Is `port` among nmap's `n` most common TCP ports? `None` when the ranking is unavailable.
+pub(crate) fn in_top_ports(n: usize, port: u16) -> Option<bool> {
+    nmap_top_ports().map(|top| top.iter().take(n).any(|p| *p == port))
+}
+
 fn rank_ports(nmap_services: &str) -> Vec<u16> {
     let mut ranked: Vec<(f64, u16)> = nmap_services
         .lines()
@@ -356,8 +361,19 @@ async fn estimate_value(s: &AppState, target_ids: &[Uuid], profile_id: Uuid, win
     if targets.is_empty() {
         return Err(invalid("Wybrane cele nie istnieją."));
     }
-    let addresses: u64 = targets.iter().filter(|t| !t.excluded).map(|t| t.address_count).fold(0, u64::saturating_add);
-    let excluded: u64 = targets.iter().filter(|t| t.excluded).map(|t| t.address_count).sum();
+    // The same address set the run will freeze: selected targets minus every excluded target
+    // and ASI_EXCLUDED_CIDRS (`pipeline::execute_run`).
+    let planned: Vec<input::Target> = targets
+        .iter()
+        .filter(|t| !t.excluded)
+        .filter_map(|t| input::normalize(&t.value).ok())
+        .collect();
+    let before = input::total_hosts(&planned);
+    let planned = input::with_exclusions(planned, &crate::pipeline::excluded_networks(s).await.map_err(fail)?);
+    let addresses = u64::try_from(input::total_hosts(&planned)).unwrap_or(u64::MAX);
+    let carved = u64::try_from(before - input::total_hosts(&planned)).unwrap_or(u64::MAX);
+    let excluded_targets: u64 = targets.iter().filter(|t| t.excluded).map(|t| t.address_count).fold(0, u64::saturating_add);
+    let excluded = excluded_targets.saturating_add(carved);
     let t = tuning(&p.config, &settings, &s.config.allowed_ports);
     let preset = p.config["ports"]["preset"].as_str().unwrap_or("top100");
     let top_n = matches!(preset, "top100" | "top1000") && !s.config.allowed_ports.is_empty();
@@ -391,8 +407,13 @@ async fn estimate_value(s: &AppState, target_ids: &[Uuid], profile_id: Uuid, win
             t.ports
         ));
     }
-    if excluded > 0 {
-        notes.push(format!("Pominięto {excluded} adresów z celów wykluczonych."));
+    if excluded_targets > 0 {
+        notes.push(format!("Pominięto {excluded_targets} adresów z celów wykluczonych."));
+    }
+    if carved > 0 {
+        notes.push(format!(
+            "Pominięto {carved} adresów wewnątrz wybranych zakresów — są wykluczone ze skanowania (cele wykluczone lub ASI_EXCLUDED_CIDRS)."
+        ));
     }
     if p.config["rate_limit_rps"].as_i64().unwrap_or(0) > t.rate as i64 {
         notes.push(format!("Limit profilu obniżono do globalnego maksimum {} zapytań/s.", t.rate));

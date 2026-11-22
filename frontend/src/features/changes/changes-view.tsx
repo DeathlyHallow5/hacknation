@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight } from "lucide-react";
+import { ArrowLeftRight, Clock } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
@@ -12,7 +12,7 @@ import { ChangeChip, ConfidenceMeter, ResponsePattern } from "@/components/data/
 import { Container, PageHeader } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/form-controls";
-import { Panel, Skeleton, Spinner } from "@/components/ui/misc";
+import { Chip, Panel, Skeleton, Spinner } from "@/components/ui/misc";
 import { SimpleSelect } from "@/components/ui/select";
 import { FieldDiff } from "@/components/viz/bits";
 import { ChangesTimeline, KIND_COLOR, KIND_ORDER } from "@/components/viz/changes-timeline";
@@ -68,7 +68,13 @@ function UnstablePanel() {
                 <ResponsePattern pattern={u.pattern} />
                 <span className="tabular text-xs text-ink-2">{fmtPercent(u.response_rate)} odpowiedzi</span>
                 <HourBars values={u.by_hour} />
+                {u.time_pattern ? (
+                  <Chip tone="warning" title={u.time_pattern.reason}>
+                    <Clock className="size-3" aria-hidden /> {u.time_pattern.label}
+                  </Chip>
+                ) : null}
               </span>
+              {u.time_pattern ? <span className="text-xs text-ink-2">{u.time_pattern.reason}</span> : null}
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-ink-2">{u.last_recheck_at ? `pomiar ${fmtRelative(u.last_recheck_at)}` : "bez pomiarów w dzień"}</span>

@@ -236,7 +236,8 @@ fn host_summary(st: &State_, h: &HostRow, pattern: &[bool]) -> Value {
     let techs = tech_names(&http);
     let o = st.overrides.get(&("host".into(), h.ip.clone()));
     let (crit, owner, tags) = st.target_info(&h.ip);
-    let mine: Vec<&v1::Finding> = st.findings.iter().filter(|f| f.ip == h.ip && f.status != "false_positive").collect();
+    let mine: Vec<&v1::Finding> =
+        st.findings.iter().filter(|f| f.ip == h.ip && f.status != "false_positive" && f.is_current()).collect();
     let score = mine.iter().map(|f| f.score_override.map_or(f.score, i32::from)).max().unwrap_or(0);
     let subnet = match h.ip.parse::<std::net::IpAddr>() {
         Ok(std::net::IpAddr::V4(a)) => format!("{}.{}.{}.0/24", a.octets()[0], a.octets()[1], a.octets()[2]),
@@ -676,38 +677,35 @@ pub async fn recheck_host(
     Ok((Extension(Note::new("host.recheck", "host", &ip, json!({ "scan_id": scan }))), Json(json!({ "queued": true }))))
 }
 
-/// `GET /api/v1/hosts/unstable` — hosts with misses or flaps, response rate by hour.
+/// `GET /api/v1/hosts/unstable` — hosts with misses or flaps, or whose presence depends on the
+/// time of day; response rate by hour. Measurements are every finished scanner run that
+/// covered the address, whichever scan it belonged to (`presence::Presence`).
 pub async fn unstable_hosts(State(s): State<AppState>) -> V1<Json<Vec<Value>>> {
-    let rows: Vec<(Uuid, String, Option<String>, Uuid, i32, i32)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+    let rows: Vec<(Uuid, String, Option<String>, i32, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "WITH latest AS ({LATEST})
-         SELECT DISTINCT ON (h.address) h.id, host(h.address), h.hostname, l.scan_id, h.flaps, h.miss_count
-         FROM latest l JOIN hosts h ON h.run_id = l.id
-         WHERE h.flaps > 0 OR h.state <> 'active' ORDER BY h.address, l.started_at DESC"
+         SELECT DISTINCT ON (h.address) h.id, host(h.address), h.hostname, h.flaps, h.state::text
+         FROM latest l JOIN hosts h ON h.run_id = l.id ORDER BY h.address, l.started_at DESC"
     )))
     .fetch_all(&s.db)
     .await
     .map_err(fail)?;
+    let presence = crate::presence::Presence::load(&s.db).await.map_err(fail)?;
     let mut out = Vec::new();
-    for (id, ip, hostname, scan, _flaps, _misses) in rows {
-        let samples: Vec<(i32, bool)> = sqlx::query_as(
-            "SELECT extract(hour FROM r.started_at AT TIME ZONE 'Europe/Warsaw')::int,
-                    EXISTS (SELECT 1 FROM hosts h WHERE h.run_id = r.id AND host(h.address) = $2 AND h.state = 'active')
-             FROM scan_runs r WHERE r.scan_id = $1 AND r.status IN ('done', 'partial') ORDER BY r.started_at",
-        )
-        .bind(scan)
-        .bind(&ip)
-        .fetch_all(&s.db)
-        .await
-        .map_err(fail)?;
+    for (id, ip, hostname, flaps, state) in rows {
+        let samples = presence.samples(&ip, hostname.as_deref());
+        let time_pattern = crate::presence::time_of_day_pattern(&samples);
+        if flaps == 0 && state == "active" && time_pattern.is_none() {
+            continue;
+        }
         let mut by_hour = vec![Value::Null; 24];
-        for hr in 0..24 {
-            let xs: Vec<bool> = samples.iter().filter(|(h, _)| *h == hr).map(|x| x.1).collect();
+        for hr in 0..24u8 {
+            let xs: Vec<bool> = samples.iter().filter(|x| x.hour == hr).map(|x| x.present).collect();
             if !xs.is_empty() {
                 by_hour[hr as usize] = json!(xs.iter().filter(|x| **x).count() as f64 / xs.len() as f64);
             }
         }
-        let pattern: Vec<bool> = samples.iter().rev().take(12).rev().map(|x| x.1).collect();
-        let rate = if samples.is_empty() { 0.0 } else { samples.iter().filter(|x| x.1).count() as f64 / samples.len() as f64 };
+        let pattern: Vec<bool> = samples.iter().rev().take(12).rev().map(|x| x.present).collect();
+        let rate = if samples.is_empty() { 0.0 } else { samples.iter().filter(|x| x.present).count() as f64 / samples.len() as f64 };
         let pending: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM scans s JOIN scan_runs r ON r.scan_id = s.id
                  WHERE 'recheck' = ANY(s.tags) AND s.name = $1 AND r.status IN ('running', 'paused', 'queued'))",
@@ -718,9 +716,11 @@ pub async fn unstable_hosts(State(s): State<AppState>) -> V1<Json<Vec<Value>>> {
         .map_err(fail)?;
         out.push(json!({
             "host_id": id, "ip": ip, "hostname": hostname, "pattern": pattern, "response_rate": (rate * 100.0).round() / 100.0,
-            "by_hour": by_hour, "last_recheck_at": null, "recheck_pending": pending,
+            "by_hour": by_hour, "last_recheck_at": null, "recheck_pending": pending, "time_pattern": time_pattern,
         }));
     }
+    // Hosts with a time-of-day pattern first: they explain themselves.
+    out.sort_by_key(|u| u["time_pattern"].is_null());
     Ok(Json(out))
 }
 
