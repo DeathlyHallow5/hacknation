@@ -343,9 +343,15 @@ async fn estimate_value(s: &AppState, target_ids: &[Uuid], profile_id: Uuid, win
     let targets = v1::load_targets(&s.db, &s.config.data_key, Some(target_ids)).await?;
     if let Some(t) = targets.iter().find(|t| !t.excluded && !s.config.permits_target(&t.value)) {
         return Err(invalid(format!(
-            "Cel {} jest poza zakresem zatwierdzonym przez administratora (ASI_ALLOWED_CIDRS) — skaner go nie obejmie.",
+            "Cel {} jest poza zakresem zatwierdzonym przez administratora (ASI_ALLOWED_CIDRS / ASI_ALLOWED_DOMAINS) — skaner go nie obejmie.",
             t.value
         )));
+    }
+    // Domains: resolvable now, and only into approved networks.
+    for t in targets.iter().filter(|t| !t.excluded && s.config.permits_domain(&t.value)) {
+        if let Err(e) = s.config.resolve_in_scope(&t.value).await {
+            return Err(invalid(format!("Cel {}: {e}.", t.value)));
+        }
     }
     if targets.is_empty() {
         return Err(invalid("Wybrane cele nie istnieją."));

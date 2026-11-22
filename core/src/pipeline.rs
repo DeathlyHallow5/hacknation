@@ -25,6 +25,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
 
+/// Page body read by httpx (`-rstr`) and kept for signatures: bounded so one batch of web
+/// servers stays far below the tool output cap (`engine::MAX_STDOUT`).
+const BODY_READ: &str = "32768";
+const BODY_KEEP: usize = 32 * 1024;
+/// Same for path probes (a probe only needs to show what is there).
+const PROBE_READ: &str = "16384";
+const PROBE_KEEP: usize = 16 * 1024;
 /// Hard cap per tool invocation when the scan has no window.
 pub(crate) const MAX_TOOL_TIME: Duration = Duration::from_secs(30 * 60);
 /// Default period between windows if the scan has a window but no repeat interval.
@@ -506,9 +513,17 @@ pub(crate) async fn run_batch(
     inputs: &[String],
     budget: Duration,
 ) -> Result<BatchStats> {
+    // Addresses the tools may report back: the inputs, plus what approved names resolve to now
+    // (a name may have changed since the scan was planned, so it is resolved again here).
+    let mut resolved: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for target in inputs {
         let approved = state.config.permits_target(target);
         anyhow::ensure!(approved, "target outside administrator-approved network");
+        if state.config.permits_domain(target) {
+            for ip in state.config.resolve_in_scope(target).await.map_err(|e| anyhow::anyhow!(e))? {
+                resolved.insert(ip.to_string());
+            }
+        }
     }
     let tools = state.config.tools_dir.as_str();
     let allowed = &state.config.allowed_ports;
@@ -562,6 +577,9 @@ pub(crate) async fn run_batch(
         "-l", list.arg(), "-s", if syn.is_some() { "s" } else { "c" }, "-Pn", "-rate", &rate, "-c", &threads,
         "-retries", "1", "-json", "-silent", "-duc",
     ];
+    if let Some(r) = state.config.dns_resolvers.as_deref() {
+        naabu_args.extend(["-r", r]);
+    }
     match scan.ports.as_str() {
         preset @ ("100" | "1000" | "full") => naabu_args.extend(["-top-ports", preset]),
         list => naabu_args.extend(["-p", list]),
@@ -572,7 +590,7 @@ pub(crate) async fn run_batch(
     }
     .context("naabu")?;
     let open = parse::naabu(&naabu_out);
-    anyhow::ensure!(open.iter().all(|(ip,h)| inputs.contains(ip) && state.config.permits_target(ip) && h.ports.iter().all(|port| allowed.contains(port))), "tool returned address outside approved batch");
+    anyhow::ensure!(open.iter().all(|(ip,h)| (inputs.contains(ip) || resolved.contains(ip)) && state.config.permits_target(ip) && h.ports.iter().all(|port| allowed.contains(port))), "tool returned address outside approved batch");
     for (ip, hp) in &open {
         alive.entry(ip.clone()).or_insert_with(|| hp.hostname.clone());
     }
@@ -617,7 +635,9 @@ pub(crate) async fn run_batch(
     let mut http = Vec::new();
     if !open.is_empty() {
         let endpoints: Vec<String> = open.iter().flat_map(|(ip, hp)| {
-            let name = ip; // Never reconnect using a name learned from a remote service.
+            // Never reconnect using a name learned from a remote service; a domain the
+            // operator gave as a target is used as is (virtual hosts answer by name).
+            let name = hp.hostname.as_ref().filter(|h| inputs.contains(h)).unwrap_or(ip);
             let services = &services;
             hp.ports
                 .iter()
@@ -639,6 +659,8 @@ pub(crate) async fn run_batch(
                 // No -fr: redirects are recorded (-location), never followed, so a 30x cannot
                 // lead the scanner outside the approved targets (F-03).
                 "-irh", "-tls-grab", "-location", "-ip",
+                // Page body for html/footer signatures, read up to 32 KiB per page.
+                "-irr", "-rstr", BODY_READ,
                 "-rl", &rate, "-t", &threads, "-timeout", "5", "-retries", "1",
             ],
             left(),
@@ -651,6 +673,36 @@ pub(crate) async fn run_batch(
             }
             Err(e) if left().is_zero() => return Err(e.context("window closed during httpx")),
             Err(e) => tracing::warn!(%run_id, index, "httpx failed: {e:#}"),
+        }
+    }
+
+    // 4b) Safe GET probes for "path" signature conditions (/admin, /login, /version...): only
+    //     the paths of enabled signatures, only on web services found above, GET without
+    //     credentials, redirects recorded but not followed, same rate limit and User-Agent.
+    let mut probes = Vec::new();
+    let paths = crate::signatures::probe_paths(&state.db).await?;
+    if !http.is_empty() && !paths.is_empty() {
+        let bases: std::collections::BTreeSet<String> = http
+            .iter()
+            .filter_map(|(r, _)| Some(format!("{}://{}:{}", r.url.split("://").next()?, r.input.rsplit_once(':')?.0, r.port)))
+            .collect();
+        let list = ListFile::new(run_id, index, "probe", bases.into_iter().collect()).await?;
+        let joined = paths.join(",");
+        match engine::run(
+            tools,
+            Tool::Httpx,
+            &[
+                "-l", list.arg(), "-path", &joined, "-json", "-silent", "-nc", "-sc", "-title", "-duc", "-ip",
+                "-random-agent=false", "-H", &ua_header, "-irr", "-rstr", PROBE_READ,
+                "-rl", &rate, "-t", &threads, "-timeout", "5", "-retries", "0",
+            ],
+            left(),
+        )
+        .await
+        {
+            Ok(out) => probes = parse::httpx(&out),
+            Err(e) if left().is_zero() => return Err(e.context("window closed during path probes")),
+            Err(e) => tracing::warn!(%run_id, index, "path probes failed: {e:#}"),
         }
     }
 
@@ -711,14 +763,15 @@ pub(crate) async fn run_batch(
         let cookies = rec.cookies();
         sqlx::query(
             "INSERT INTO http_findings (service_id, url, status_code, title, redirects, technologies, cms,
-                favicon_hash, is_admin, is_staging, headers_enc, cookies_enc, tls_enc, raw_enc)
+                favicon_hash, is_admin, is_staging, headers_enc, cookies_enc, tls_enc, raw_enc, body_enc)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                pgp_sym_encrypt($11, $15), pgp_sym_encrypt($12, $15), pgp_sym_encrypt($13, $15), pgp_sym_encrypt($14, $15))
+                pgp_sym_encrypt($11, $15), pgp_sym_encrypt($12, $15), pgp_sym_encrypt($13, $15), pgp_sym_encrypt($14, $15),
+                pgp_sym_encrypt($16, $15))
              ON CONFLICT (service_id, url) DO UPDATE SET status_code = EXCLUDED.status_code, title = EXCLUDED.title,
                 redirects = EXCLUDED.redirects, technologies = EXCLUDED.technologies, cms = EXCLUDED.cms,
                 favicon_hash = EXCLUDED.favicon_hash, is_admin = EXCLUDED.is_admin, is_staging = EXCLUDED.is_staging,
                 headers_enc = EXCLUDED.headers_enc, cookies_enc = EXCLUDED.cookies_enc,
-                tls_enc = EXCLUDED.tls_enc, raw_enc = EXCLUDED.raw_enc",
+                tls_enc = EXCLUDED.tls_enc, raw_enc = EXCLUDED.raw_enc, body_enc = EXCLUDED.body_enc",
         )
         .bind(service_id)
         .bind(&rec.url)
@@ -730,16 +783,39 @@ pub(crate) async fn run_batch(
         .bind(&rec.favicon)
         .bind(is_admin)
         .bind(is_staging)
-        .bind(serde_json::to_string(&rec.header.iter().filter(|(k, _)| matches!(k.as_str(), "server" | "content_type")).collect::<std::collections::BTreeMap<_, _>>())?)
+        .bind(serde_json::to_string(&fingerprint::stored_headers(&rec.header))?)
         .bind((!cookies.is_empty()).then(|| serde_json::to_string(&cookies)).transpose()?)
         .bind(rec.tls.as_ref().map(|t| t.to_string()))
         .bind(None::<String>)
+        .bind(key)
+        .bind(rec.body.as_deref().map(|b| fingerprint::clip_body(b, BODY_KEEP)))
+        .execute(&mut *tx)
+        .await?;
+    }
+    for (rec, _) in &probes {
+        let Some(port) = rec.port_num() else { continue };
+        let Some(&service_id) = service_ids.get(&(rec.ip().to_string(), port)) else { continue };
+        let Some(path) = rec.path.as_deref().filter(|p| paths.iter().any(|x| x == p)) else { continue };
+        sqlx::query(
+            "INSERT INTO http_probes (run_id, service_id, path, url, status_code, title, content_length, body_enc)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, pgp_sym_encrypt($8, $9))
+             ON CONFLICT (service_id, path) DO UPDATE SET status_code = EXCLUDED.status_code, title = EXCLUDED.title,
+                 content_length = EXCLUDED.content_length, body_enc = EXCLUDED.body_enc, url = EXCLUDED.url, probed_at = now()",
+        )
+        .bind(run_id)
+        .bind(service_id)
+        .bind(path)
+        .bind(&rec.url)
+        .bind(rec.status_code)
+        .bind(&rec.title)
+        .bind(rec.content_length)
+        .bind(rec.body.as_deref().map(|b| fingerprint::clip_body(b, PROBE_KEEP)).unwrap_or_default())
         .bind(key)
         .execute(&mut *tx)
         .await?;
     }
     tx.commit().await?;
-    tracing::info!(%run_id, index, alive = stats.alive, open = stats.open_ports, http = stats.http, "batch done");
+    tracing::info!(%run_id, index, alive = stats.alive, open = stats.open_ports, http = stats.http, probes = probes.len(), "batch done");
     Ok(stats)
 }
 

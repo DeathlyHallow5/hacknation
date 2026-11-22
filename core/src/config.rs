@@ -20,6 +20,12 @@ pub struct Config {
     pub excluded_cidrs: Vec<ipnet::Ipv4Net>,
     pub allowed_origins: Vec<String>,
     pub allowed_cidrs: Vec<ipnet::Ipv4Net>,
+    /// `ASI_ALLOWED_DOMAINS`: DNS names (and their subdomains) that may be scan targets; each
+    /// must still resolve only into `allowed_cidrs` when scanned (`resolve_in_scope`).
+    pub allowed_domains: Vec<String>,
+    /// DNS servers for naabu, which otherwise asks public resolvers the core cannot reach:
+    /// `ASI_DNS_RESOLVERS`, else the container's own (`/etc/resolv.conf`, Docker's 127.0.0.11).
+    pub dns_resolvers: Option<String>,
     pub defectdojo_url: Option<String>,
     pub defectdojo_token: Option<String>,
     /// Session lifetime (PROJECT.md §10).
@@ -56,10 +62,48 @@ impl Config {
         })
     }
 
+    /// An approved DNS name: an `ASI_ALLOWED_DOMAINS` entry or a subdomain of one.
+    pub fn permits_domain(&self, name: &str) -> bool {
+        let n = name.trim().trim_end_matches('.').to_ascii_lowercase();
+        let valid = !n.is_empty()
+            && n.len() <= 253
+            && n.split('.').all(|l| !l.is_empty() && l.len() <= 63 && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') && !l.starts_with('-') && !l.ends_with('-'));
+        valid && self.allowed_domains.iter().any(|d| n == *d || n.ends_with(&format!(".{d}")))
+    }
+
+    /// Resolve an approved name and check every IPv4 address it points to is itself approved
+    /// (a name cannot lead the scanner outside the allowlist). Checked again before each batch.
+    pub async fn resolve_in_scope(&self, name: &str) -> std::result::Result<Vec<std::net::Ipv4Addr>, String> {
+        if !self.permits_domain(name) {
+            return Err(format!("domena {name} nie jest na liście ASI_ALLOWED_DOMAINS"));
+        }
+        let lookup = tokio::time::timeout(std::time::Duration::from_secs(5), tokio::net::lookup_host((name, 0)))
+            .await
+            .map_err(|_| format!("{name}: DNS nie odpowiedział w 5 s"))?
+            .map_err(|e| format!("{name}: nie można rozwiązać nazwy ({e})"))?;
+        let mut ips: Vec<std::net::Ipv4Addr> = lookup
+            .filter_map(|a| match a.ip() {
+                std::net::IpAddr::V4(v) => Some(v),
+                std::net::IpAddr::V6(_) => None,
+            })
+            .collect();
+        ips.sort();
+        ips.dedup();
+        if ips.is_empty() {
+            return Err(format!("{name}: brak adresu IPv4"));
+        }
+        if let Some(bad) = ips.iter().find(|ip| !self.permits_target(&ip.to_string())) {
+            return Err(format!("{name} wskazuje na {bad} — poza zakresem zatwierdzonym przez administratora (ASI_ALLOWED_CIDRS)"));
+        }
+        Ok(ips)
+    }
+
     pub fn permits_target(&self, target: &str) -> bool {
         use ipnet::Ipv4Net;
         use std::net::Ipv4Addr;
-        let Some(net) = target.parse::<Ipv4Net>().ok().or_else(|| target.parse::<Ipv4Addr>().ok().map(Ipv4Net::from)) else { return false };
+        let Some(net) = target.parse::<Ipv4Net>().ok().or_else(|| target.parse::<Ipv4Addr>().ok().map(Ipv4Net::from)) else {
+            return self.permits_domain(target);
+        };
         let prohibited = ["0.0.0.0/8","127.0.0.0/8","169.254.0.0/16","224.0.0.0/4","240.0.0.0/4"];
         self.allowed_cidrs.iter().any(|allow| allow.contains(&net))
             && !self.excluded_cidrs.iter().any(|deny| deny.contains(&net) || net.contains(deny))
@@ -81,6 +125,13 @@ impl Config {
             allowed_ports: std::env::var("ASI_ALLOWED_PORTS").unwrap_or_default().split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::parse).collect::<Result<_,_>>().context("invalid ASI_ALLOWED_PORTS")?,
             allowed_origins: std::env::var("ASI_ALLOWED_ORIGINS").unwrap_or_else(|_| "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001".into()).split(',').map(|s| s.trim().to_owned()).collect(),
             excluded_cidrs: std::env::var("ASI_EXCLUDED_CIDRS").unwrap_or_default().split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::parse).collect::<Result<_,_>>().context("invalid ASI_EXCLUDED_CIDRS")?,
+            dns_resolvers: dns_resolvers(),
+            allowed_domains: std::env::var("ASI_ALLOWED_DOMAINS")
+                .unwrap_or_default()
+                .split(',')
+                .map(|d| d.trim().trim_start_matches("*.").trim_matches('.').to_ascii_lowercase())
+                .filter(|d| !d.is_empty())
+                .collect(),
             allowed_cidrs: std::env::var("ASI_ALLOWED_CIDRS").unwrap_or_default().split(',').map(str::trim).filter(|v| !v.is_empty()).map(str::parse).collect::<Result<_, _>>().context("invalid ASI_ALLOWED_CIDRS")?,
             defectdojo_url: std::env::var("DEFECTDOJO_URL").ok().filter(|v| !v.is_empty()),
             defectdojo_token: secret("DEFECTDOJO_TOKEN")?,
@@ -128,6 +179,8 @@ impl Config {
             allowed_origins: Vec::new(),
             allowed_ports: [80,443].into_iter().collect(),
             allowed_cidrs: Vec::new(),
+            allowed_domains: Vec::new(),
+            dns_resolvers: None,
             defectdojo_url: None,
             defectdojo_token: None,
             session_ttl_hours: 12,
@@ -160,6 +213,22 @@ impl std::fmt::Debug for Config {
     }
 }
 
+/// `ASI_DNS_RESOLVERS` (comma-separated ip[:port]), else the nameservers of /etc/resolv.conf.
+fn dns_resolvers() -> Option<String> {
+    let list: Vec<String> = match std::env::var("ASI_DNS_RESOLVERS").ok().filter(|v| !v.trim().is_empty()) {
+        Some(v) => v.split(',').map(str::trim).filter(|x| !x.is_empty()).map(str::to_string).collect(),
+        None => std::fs::read_to_string("/etc/resolv.conf")
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("nameserver"))
+            .map(str::trim)
+            .filter(|ip| ip.parse::<std::net::IpAddr>().is_ok())
+            .map(|ip| if ip.contains(':') { format!("[{ip}]:53") } else { format!("{ip}:53") })
+            .collect(),
+    };
+    (!list.is_empty()).then(|| list.join(","))
+}
+
 #[cfg(test)]
 mod scope_tests {
     use super::*;
@@ -172,6 +241,9 @@ mod scope_tests {
         assert!(cfg.permits_target("172.30.0.0/25"));
         assert!(!cfg.permits_target("172.30.0.0/23"));
         assert!(!cfg.permits_target("example.com"));
+        cfg.allowed_domains.push("asi.test".into());
+        assert!(cfg.permits_target("www.asi.test") && cfg.permits_target("ASI.test") && cfg.permits_target("a.b.asi.test"));
+        assert!(!cfg.permits_target("evilasi.test") && !cfg.permits_target("asi.test.evil.com") && !cfg.permits_target("-x.asi.test"));
         cfg.allowed_cidrs.push("0.0.0.0/0".parse().unwrap());
         for forbidden in ["127.0.0.1","169.254.169.254","224.0.0.1","127.0.0.0/7","::1"] {
             assert!(!cfg.permits_target(forbidden));

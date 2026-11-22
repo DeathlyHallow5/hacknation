@@ -138,6 +138,11 @@ pub struct HttpxRecord {
     pub final_url: Option<String>,
     pub chain: Vec<Value>,
     pub failed: bool,
+    /// Response body (`-irr`, read up to `-rstr` bytes).
+    pub body: Option<String>,
+    /// Probed path (`-path`), "/" for the plain request.
+    pub path: Option<String>,
+    pub content_length: Option<i64>,
 }
 
 impl HttpxRecord {

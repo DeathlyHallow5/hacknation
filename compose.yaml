@@ -35,6 +35,8 @@ services:
       ASI_ALLOWED_PORTS: ${ASI_ALLOWED_PORTS:-22,80,443,3306,5432,6379,8080,8443}
       ASI_EXCLUDED_CIDRS: ${ASI_EXCLUDED_CIDRS:-}
       ASI_ALLOWED_CIDRS: ${ASI_ALLOWED_CIDRS:-172.30.0.0/24}
+      # DNS names that may be targets (and their subdomains); each must resolve into the CIDRs above.
+      ASI_ALLOWED_DOMAINS: ${ASI_ALLOWED_DOMAINS:-asi.test}
       ASI_MAX_RUNS: ${ASI_MAX_RUNS:-1}
       ASI_MAX_CONCURRENCY: ${ASI_MAX_CONCURRENCY:-256}
       ASI_ADMIN_USER: ${ASI_ADMIN_USER:-admin}
@@ -86,12 +88,38 @@ services:
     networks:
       lab:
         ipv4_address: 172.30.0.10
+        # Lab DNS names (Docker resolves them on the lab network): domain targets in the demo.
+        aliases: [www.asi.test]
   lab-httpd:
     profiles: [lab]
     image: httpd:2.4-alpine
     networks:
       lab:
         ipv4_address: 172.30.0.11
+        aliases: [intranet.asi.test]
+  # A small CMS site for the signature demo: meta generator and version in the footer (html
+  # signatures), X-Powered-By (header), and paths the built-in path signatures probe:
+  # an exposed /.git/HEAD, /version, /login with a password form, /admin/.
+  lab-cms:
+    profiles: [lab]
+    image: nginx:1.27-alpine
+    command:
+      - sh
+      - -c
+      - |
+        H=/usr/share/nginx/html
+        mkdir -p $$H/.git $$H/admin
+        echo '<!doctype html><html><head><title>Blog Wydzialu - CBI</title><meta name="generator" content="WordPress 6.4.2"></head><body><h1>Aktualnosci</h1><footer>Powered by WordPress 6.4.2</footer></body></html>' > $$H/index.html
+        echo 'ref: refs/heads/main' > $$H/.git/HEAD
+        echo '1.4.2' > $$H/version
+        echo '<html><head><title>Logowanie</title></head><body><form method="post"><input name="user"><input type="password" name="pass"></form></body></html>' > $$H/login.html
+        echo '<html><head><title>Panel administracyjny</title></head><body>Zaloguj</body></html>' > $$H/admin/index.html
+        echo 'server { listen 80; root /usr/share/nginx/html; add_header X-Powered-By "PHP/8.1.2" always; location = /version { default_type text/plain; } location = /login { default_type text/html; try_files /login.html =404; } location /.git/ { default_type text/plain; } }' > /etc/nginx/conf.d/default.conf
+        exec nginx -g 'daemon off;'
+    networks:
+      lab:
+        ipv4_address: 172.30.0.13
+        aliases: [blog.asi.test]
   # "Infrastructure change" for the 2nd demo run (docker compose --profile lab2 up -d):
   # a new host exposing an admin login on a staging page.
   lab-admin:
@@ -106,6 +134,7 @@ services:
     networks:
       lab:
         ipv4_address: 172.30.0.12
+        aliases: [admin.staging.asi.test]
 
 networks:
   default:

@@ -64,3 +64,60 @@ mod tests {
         assert!(!is_staging("devices.example.com", None));
     }
 }
+
+/// Response headers kept (encrypted) for header signatures — "ciekawe nagłówki" — minus what
+/// may carry credentials: cookies are stored apart without values (`HttpxRecord::cookies`),
+/// and headers whose name suggests a secret keep their name with the value redacted.
+pub fn stored_headers(header: &std::collections::BTreeMap<String, serde_json::Value>) -> std::collections::BTreeMap<String, serde_json::Value> {
+    const SECRET: &[&str] = &["authorization", "cookie", "token", "secret", "password", "passwd", "session", "key", "auth", "csrf", "signature"];
+    header
+        .iter()
+        .filter(|(k, _)| k.as_str() != "set_cookie" && k.len() <= 64)
+        .take(64)
+        .map(|(k, v)| {
+            let name = k.to_lowercase();
+            let value = if SECRET.iter().any(|s| name.contains(s)) {
+                serde_json::Value::String("[redacted]".into())
+            } else {
+                match v {
+                    serde_json::Value::String(s) => serde_json::Value::String(s.chars().take(512).collect()),
+                    other => serde_json::Value::String(other.to_string().chars().take(512).collect()),
+                }
+            };
+            (k.clone(), value)
+        })
+        .collect()
+}
+
+/// First `max` bytes of a page body, cut on a character boundary.
+pub fn clip_body(body: &str, max: usize) -> &str {
+    if body.len() <= max {
+        return body;
+    }
+    let mut end = max;
+    while !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    &body[..end]
+}
+
+#[cfg(test)]
+mod stored_header_tests {
+    #[test]
+    fn interesting_headers_kept_secrets_redacted() {
+        let h: std::collections::BTreeMap<String, serde_json::Value> = [
+            ("x_powered_by", "PHP/8.1.2"), ("server", "nginx"), ("x_api_key", "abc123"),
+            ("set_cookie", "SESSION=xyz"), ("x_csrf_token", "t0k3n"), ("x_generator", "Drupal 10"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), serde_json::Value::String(v.into())))
+        .collect();
+        let s = super::stored_headers(&h);
+        assert_eq!(s["x_powered_by"], "PHP/8.1.2");
+        assert_eq!(s["x_generator"], "Drupal 10");
+        assert_eq!(s["x_api_key"], "[redacted]");
+        assert_eq!(s["x_csrf_token"], "[redacted]");
+        assert!(!s.contains_key("set_cookie"));
+        assert_eq!(super::clip_body("zażółć", 3), "za");
+    }
+}

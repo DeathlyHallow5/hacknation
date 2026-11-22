@@ -124,7 +124,7 @@ fn build_regex(p: &str) -> Result<Regex, String> {
 /// non-blocking warnings shown in the tester.
 fn compile(input: &SignatureInput) -> Result<(Vec<Compiled>, Vec<String>), Vec<String>> {
     let mut errors = Vec::new();
-    let mut warnings = Vec::new();
+    let warnings: Vec<String> = Vec::new();
     let name = input.name.trim();
     if name.is_empty() || name.chars().count() > 120 {
         errors.push("Nazwa: 1–120 znaków.".into());
@@ -152,14 +152,19 @@ fn compile(input: &SignatureInput) -> Result<(Vec<Compiled>, Vec<String>), Vec<S
             "header" | "cookie" if c.name.as_deref().is_none_or(|n| n.trim().is_empty()) => {
                 errors.push(format!("{at}: podaj nazwę nagłówka/ciasteczka."))
             }
-            "header" | "cookie" | "favicon_hash" | "title" | "version" | "status" => {}
-            "html" => warnings.push(format!(
-                "{at}: skaner nie przechowuje treści stron — warunek „html” działa tylko w teście na surowej odpowiedzi."
-            )),
-            // Active probing is out of scope: signatures only read collected evidence.
-            "path" => errors.push(format!(
-                "{at}: warunek „path” wymagałby dodatkowego żądania do hosta — sygnatury działają wyłącznie na zebranych danych (bezpieczeństwo)."
-            )),
+            "header" | "cookie" | "favicon_hash" | "title" | "version" | "status" | "html" => {}
+            // A safe probe: one GET of this path on web services the scan found (no login,
+            // no body, no query, redirects not followed). `op` then tests the page it returns.
+            "path" => {
+                if !c.path.as_deref().is_some_and(valid_probe_path) {
+                    errors.push(format!(
+                        "{at}: ścieżka musi zaczynać się od „/”, mieć najwyżej 200 znaków, bez spacji, „..”, „?”, „#”, „@” i „\\”."
+                    ));
+                }
+                if c.expect_status.is_some_and(|st| !(100..=599).contains(&st)) {
+                    errors.push(format!("{at}: oczekiwany kod HTTP 100–599."));
+                }
+            }
             other => errors.push(format!("{at}: nieznany typ warunku „{other}”.")),
         }
         if !matches!(c.op.as_str(), "exists" | "equals" | "contains" | "regex") {
@@ -201,6 +206,44 @@ fn compile(input: &SignatureInput) -> Result<(Vec<Compiled>, Vec<String>), Vec<S
     if errors.is_empty() { Ok((out, warnings)) } else { Err(errors) }
 }
 
+/// A path a "path" condition may probe: absolute, short, printable ASCII, no traversal, query,
+/// fragment, credentials or backslashes — a plain GET of a fixed resource.
+pub fn valid_probe_path(p: &str) -> bool {
+    let p = p.trim();
+    p.starts_with('/')
+        && p.len() <= 200
+        && p.bytes().all(|b| b.is_ascii_graphic())
+        && !p.contains("..")
+        && !p.contains(['?', '#', '@', '\\'])
+}
+
+/// Paths of the "path" conditions of enabled signatures (what the scanner will probe), at most
+/// `MAX_PROBE_PATHS` per run so a signature set cannot turn into a directory scan.
+pub async fn probe_paths(db: &sqlx::PgPool) -> sqlx::Result<Vec<String>> {
+    let mut paths: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT trim(c->>'path') FROM signatures s, jsonb_array_elements(s.rule->'conditions') c
+         WHERE s.enabled AND c->>'type' = 'path' AND c->>'path' IS NOT NULL",
+    )
+    .fetch_all(db)
+    .await?;
+    paths.retain(|p| valid_probe_path(p));
+    paths.sort();
+    paths.truncate(MAX_PROBE_PATHS);
+    Ok(paths)
+}
+
+/// Upper bound of distinct probe paths per run.
+pub const MAX_PROBE_PATHS: usize = 16;
+
+/// Result of one GET probe of a path (from `http_probes`).
+#[derive(Debug, Clone, Default)]
+pub struct Probe {
+    pub path: String,
+    pub status: Option<i32>,
+    pub title: Option<String>,
+    pub body: Option<String>,
+}
+
 // ---------- evidence and matching ----------
 
 /// What a signature can look at: one HTTP response (or a bare service).
@@ -216,6 +259,8 @@ pub struct Subject {
     /// Version strings: service product + version, technologies, Server header.
     pub versions: Vec<String>,
     pub body: Option<String>,
+    /// GET probes of signature paths on this service.
+    pub probes: Vec<Probe>,
 }
 
 fn clip(s: &str) -> &str {
@@ -263,6 +308,28 @@ fn eval_condition(c: &Compiled, s: &Subject) -> (bool, Option<String>, Option<St
         "status" => candidates.extend(s.status.map(|st| (label("status", &st.to_string()), st.to_string()))),
         "version" => candidates.extend(s.versions.iter().map(|v| (v.clone(), v.clone()))),
         "html" => candidates.extend(s.body.iter().map(|b| ("html".to_string(), b.clone()))),
+        "path" => {
+            let want = c.cond.path.as_deref().unwrap_or_default().trim();
+            let Some(p) = s.probes.iter().find(|p| p.path == want) else { return (false, None, None) };
+            let status_ok = match c.cond.expect_status {
+                Some(e) => p.status == Some(e),
+                None => p.status.is_some_and(|st| (200..300).contains(&st)),
+            };
+            if !status_ok {
+                return (false, None, None);
+            }
+            let ev = format!("GET {} → HTTP {}", p.path, p.status.unwrap_or_default());
+            let extract = |v: &str| c.extract.as_ref().and_then(|r| r.captures(clip(v))).and_then(|m| m.get(1)).map(|m| m.as_str().to_string());
+            if c.cond.op == "exists" {
+                return (true, Some(ev), p.body.as_deref().and_then(extract));
+            }
+            for value in [p.body.as_deref(), p.title.as_deref()].into_iter().flatten() {
+                if let Some(hit) = test_op(c, value) {
+                    return (true, Some(format!("{ev}: {}", hit.chars().take(160).collect::<String>())), extract(value));
+                }
+            }
+            return (false, None, None);
+        }
         _ => {}
     }
     for (ev, value) in &candidates {
@@ -336,7 +403,7 @@ fn subject_from(
     if let Some((_, server)) = hs.iter().find(|(h, _)| h == "server") {
         versions.push(server.clone());
     }
-    Subject { status, title, headers: hs, cookies: cs, favicon, versions, body: None }
+    Subject { status, title, headers: hs, cookies: cs, favicon, versions, body: None, probes: Vec::new() }
 }
 
 fn subject_from_raw(raw: &RawResponse) -> Subject {
@@ -467,6 +534,26 @@ struct EvidenceRow {
     version: Option<String>,
     headers: Option<Value>,
     cookies: Option<Value>,
+    body: Option<String>,
+}
+
+/// Probes of a run (or of one service), by service.
+async fn load_probes(db: &sqlx::PgPool, key: &str, run: Option<Uuid>, service: Option<Uuid>) -> sqlx::Result<BTreeMap<Uuid, Vec<Probe>>> {
+    type ProbeRow = (Uuid, String, Option<i32>, Option<String>, Option<String>);
+    let rows: Vec<ProbeRow> = sqlx::query_as(
+        "SELECT service_id, path, status_code, title, pgp_sym_decrypt(body_enc, $3) FROM http_probes
+         WHERE ($1::uuid IS NULL OR run_id = $1) AND ($2::uuid IS NULL OR service_id = $2)",
+    )
+    .bind(run)
+    .bind(service)
+    .bind(key)
+    .fetch_all(db)
+    .await?;
+    let mut out: BTreeMap<Uuid, Vec<Probe>> = BTreeMap::new();
+    for (sid, path, status, title, body) in rows {
+        out.entry(sid).or_default().push(Probe { path, status, title, body });
+    }
+    Ok(out)
 }
 
 /// Evaluate all enabled signatures on one run and replace its hits.
@@ -474,7 +561,8 @@ pub async fn evaluate_run(db: &sqlx::PgPool, key: &str, run_id: Uuid) -> sqlx::R
     let sigs = load_active(db).await?;
     let rows = sqlx::query_as::<_, EvidenceRow>(
         "SELECT s.id AS service_id, f.url, f.status_code, f.title, f.favicon_hash, f.technologies, s.product, s.version,
-                pgp_sym_decrypt(f.headers_enc, $2)::jsonb AS headers, pgp_sym_decrypt(f.cookies_enc, $2)::jsonb AS cookies
+                pgp_sym_decrypt(f.headers_enc, $2)::jsonb AS headers, pgp_sym_decrypt(f.cookies_enc, $2)::jsonb AS cookies,
+                pgp_sym_decrypt(f.body_enc, $2) AS body
          FROM hosts h JOIN services s ON s.host_id = h.id LEFT JOIN http_findings f ON f.service_id = s.id
          WHERE h.run_id = $1",
     )
@@ -482,6 +570,7 @@ pub async fn evaluate_run(db: &sqlx::PgPool, key: &str, run_id: Uuid) -> sqlx::R
     .bind(key)
     .fetch_all(db)
     .await?;
+    let mut probes = load_probes(db, key, Some(run_id), None).await?;
     struct Acc {
         url: Option<String>,
         version: Option<String>,
@@ -495,7 +584,9 @@ pub async fn evaluate_run(db: &sqlx::PgPool, key: &str, run_id: Uuid) -> sqlx::R
         if !pv.is_empty() {
             versions.insert(0, pv);
         }
-        let subject = subject_from(r.status_code, r.title.clone(), r.headers.clone(), r.cookies.clone(), r.favicon_hash.clone(), versions);
+        let mut subject = subject_from(r.status_code, r.title.clone(), r.headers.clone(), r.cookies.clone(), r.favicon_hash.clone(), versions);
+        subject.body = r.body.clone();
+        subject.probes = probes.remove(&r.service_id).unwrap_or_default();
         for sig in &sigs {
             let ev = evaluate(&sig.operator, &sig.compiled, &subject);
             if ev.matched {
@@ -803,12 +894,14 @@ pub async fn test(State(s): State<AppState>, Json(b): Json<TestBody>) -> Result<
             })))
         }
     };
+    let is_raw = matches!(b.target, TestTarget::Raw { .. });
     let (subject, label) = match b.target {
         TestTarget::Raw { raw } => (subject_from_raw(&raw), format!("Surowa odpowiedź (HTTP {})", raw.status_code)),
         TestTarget::Service { service_id } => {
             let r = sqlx::query_as::<_, EvidenceRow>(
                 "SELECT s.id AS service_id, f.url, f.status_code, f.title, f.favicon_hash, f.technologies, s.product, s.version,
-                        pgp_sym_decrypt(f.headers_enc, $2)::jsonb AS headers, pgp_sym_decrypt(f.cookies_enc, $2)::jsonb AS cookies
+                        pgp_sym_decrypt(f.headers_enc, $2)::jsonb AS headers, pgp_sym_decrypt(f.cookies_enc, $2)::jsonb AS cookies,
+                        pgp_sym_decrypt(f.body_enc, $2) AS body
                  FROM services s LEFT JOIN http_findings f ON f.service_id = s.id WHERE s.id = $1 LIMIT 1",
             )
             .bind(service_id)
@@ -823,9 +916,20 @@ pub async fn test(State(s): State<AppState>, Json(b): Json<TestBody>) -> Result<
             if !pv.is_empty() {
                 versions.insert(0, pv);
             }
-            (subject_from(r.status_code, r.title, r.headers, r.cookies, r.favicon_hash, versions), label)
+            let mut subject = subject_from(r.status_code, r.title, r.headers, r.cookies, r.favicon_hash, versions);
+            subject.body = r.body;
+            subject.probes = load_probes(&s.db, &s.config.data_key, None, Some(service_id))
+                .await
+                .map_err(fail)?
+                .remove(&service_id)
+                .unwrap_or_default();
+            (subject, label)
         }
     };
+    let mut warnings = warnings;
+    if is_raw && b.signature.rule.conditions.iter().any(|c| c.kind == "path") {
+        warnings.push("Warunek „path” sprawdza wynik próby GET z ostatniego skanu — w teście na surowej odpowiedzi nie jest spełniony; wybierz usługę.".into());
+    }
     let ev = evaluate(&b.signature.rule.operator, &compiled, &subject);
     Ok(Json(json!({
         "matched": ev.matched,
@@ -987,8 +1091,14 @@ mod tests {
 
     #[test]
     fn unsafe_or_invalid_rules_are_rejected() {
-        let path = sig(json!([{ "type": "path", "path": "/phpmyadmin/", "op": "exists" }]), "and");
-        assert!(compile(&path).is_err(), "no active probing");
+        // A path probe is allowed, but only a plain absolute path.
+        assert!(compile(&sig(json!([{ "type": "path", "path": "/phpmyadmin/", "op": "exists" }]), "and")).is_ok());
+        for bad in ["phpmyadmin", "/../etc/passwd", "/a?user=admin", "/a b", "/x@evil", "/a#b", r"/a\b"] {
+            let p = sig(json!([{ "type": "path", "path": bad, "op": "exists" }]), "and");
+            assert!(compile(&p).is_err(), "{bad} must be refused");
+        }
+        let status = sig(json!([{ "type": "path", "path": "/x", "op": "exists", "expect_status": 999 }]), "and");
+        assert!(compile(&status).is_err());
         let huge = sig(json!([{ "type": "title", "op": "regex", "value": "a".repeat(600) }]), "and");
         assert!(compile(&huge).is_err());
         let bad = sig(json!([{ "type": "title", "op": "regex", "value": "(" }]), "and");
@@ -1031,5 +1141,38 @@ mod tests {
         assert_eq!(s.title.as_deref(), Some("Apache Tomcat/9.0.80"));
         assert_eq!(s.cookies[0].0, "JSESSIONID");
         assert!(s.versions.iter().any(|v| v.contains("Coyote")));
+    }
+
+    #[test]
+    fn path_probes_and_page_content() {
+        let git = sig(json!([{ "type": "path", "path": "/.git/HEAD", "op": "contains", "value": "ref:" }]), "and");
+        let (c, _) = compile(&git).unwrap();
+        let mut s = subject();
+        assert!(!evaluate("and", &c, &s).matched, "no probe, no match");
+        s.probes.push(Probe { path: "/.git/HEAD".into(), status: Some(200), title: None, body: Some("ref: refs/heads/main
+".into()) });
+        let ev = evaluate("and", &c, &s);
+        assert!(ev.matched);
+        assert!(ev.conditions[0].1.as_deref().unwrap().starts_with("GET /.git/HEAD → HTTP 200"));
+        s.probes[0].status = Some(404);
+        assert!(!evaluate("and", &c, &s).matched, "2xx expected by default");
+        let forbidden = sig(json!([{ "type": "path", "path": "/.git/HEAD", "op": "exists", "expect_status": 404 }]), "and");
+        assert!(evaluate("and", &compile(&forbidden).unwrap().0, &s).matched, "explicit expected status");
+
+        let footer = sig(json!([{ "type": "html", "op": "regex", "value": r"(?i)powered\s+by",
+            "extract": r"(?i)powered\s+by\s+(?:<[^>]+>\s*)?([A-Za-z][\w.-]*(?:\s+|/)v?\d+(?:\.\d+)+)" }]), "and");
+        s.body = Some("<html><footer>Powered by <a href=/>WordPress 6.4.2</a></footer></html>".into());
+        let ev = evaluate("and", &compile(&footer).unwrap().0, &s);
+        assert!(ev.matched);
+        assert_eq!(ev.version.as_deref(), Some("WordPress 6.4.2"));
+    }
+
+    #[test]
+    fn builtin_signatures_compile() {
+        let list: Vec<SignatureInput> = serde_json::from_str(include_str!("../signatures/builtin.json")).unwrap();
+        for s in &list {
+            assert!(compile(s).is_ok(), "{}", s.name);
+        }
+        assert!(list.iter().any(|s| s.rule.conditions.iter().any(|c| c.kind == "path")));
     }
 }
