@@ -201,17 +201,54 @@ struct Tuning {
     port_count: u64,
 }
 
+/// TCP ports by nmap's measured open frequency (`nmap-services`, shipped in the image), most
+/// common first — the same ranking as the scanners' top-N presets.
+fn nmap_top_ports() -> Option<&'static [u16]> {
+    static TOP: std::sync::OnceLock<Option<Vec<u16>>> = std::sync::OnceLock::new();
+    TOP.get_or_init(|| {
+        let text = std::fs::read_to_string("/usr/share/nmap/nmap-services").ok()?;
+        Some(rank_ports(&text))
+    })
+    .as_deref()
+}
+
+fn rank_ports(nmap_services: &str) -> Vec<u16> {
+    let mut ranked: Vec<(f64, u16)> = nmap_services
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| {
+            let mut f = l.split_whitespace().skip(1);
+            let port = f.next()?.strip_suffix("/tcp")?.parse().ok()?;
+            Some((f.next()?.parse().ok()?, port))
+        })
+        .collect();
+    ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
+    ranked.into_iter().map(|(_, p)| p).collect()
+}
+
+/// A top-N preset under an administrator allowlist: only the approved ports among the N most
+/// common (the scope policy refuses the bare preset). No allowlist = the preset as is.
+fn top_ports(n: usize, approved: &std::collections::BTreeSet<u16>) -> String {
+    match nmap_top_ports() {
+        Some(top) if !approved.is_empty() => {
+            top.iter().take(n).filter(|p| approved.contains(p)).map(u16::to_string).collect::<Vec<_>>().join(",")
+        }
+        _ => n.to_string(),
+    }
+}
+
 /// `approved`: the administrator's port allowlist (`ASI_ALLOWED_PORTS`); the "allowed" preset
-/// means exactly those ports. Empty (no policy) = the dashboard setting `scan_safety.allowed_ports`.
+/// means exactly those ports, top-N presets keep only the approved ones. Empty (no policy) =
+/// presets as is and the dashboard setting `scan_safety.allowed_ports`.
 fn tuning(cfg: &Value, settings: &Value, approved: &std::collections::BTreeSet<u16>) -> Tuning {
     let max = settings["scan_safety"]["max_rate_rps"].as_i64().unwrap_or(1000) as i32;
     let rate = (cfg["rate_limit_rps"].as_i64().unwrap_or(100) as i32).clamp(1, max.max(1));
     let ports = match cfg["ports"]["preset"].as_str() {
-        Some("top1000") => "1000".to_string(),
+        Some("top1000") => top_ports(1000, approved),
         Some("allowed") if !approved.is_empty() => approved.iter().map(u16::to_string).collect::<Vec<_>>().join(","),
         Some("allowed") => settings["scan_safety"]["allowed_ports"].as_str().unwrap_or("100").to_string(),
         Some("custom") => cfg["ports"]["custom"].as_str().unwrap_or("100").to_string(),
-        _ => "100".to_string(),
+        _ => top_ports(100, approved),
     };
     let port_count = match ports.as_str() {
         "100" => 100,
@@ -316,6 +353,13 @@ async fn estimate_value(s: &AppState, target_ids: &[Uuid], profile_id: Uuid, win
     let addresses: u64 = targets.iter().filter(|t| !t.excluded).map(|t| t.address_count).fold(0, u64::saturating_add);
     let excluded: u64 = targets.iter().filter(|t| t.excluded).map(|t| t.address_count).sum();
     let t = tuning(&p.config, &settings, &s.config.allowed_ports);
+    let preset = p.config["ports"]["preset"].as_str().unwrap_or("top100");
+    let top_n = matches!(preset, "top100" | "top1000") && !s.config.allowed_ports.is_empty();
+    if top_n && t.ports.is_empty() {
+        return Err(invalid(
+            "Żaden z najczęstszych portów tego profilu nie jest zatwierdzony przez administratora (ASI_ALLOWED_PORTS).",
+        ));
+    }
     if !s.config.permits_ports(&t.ports) {
         return Err(invalid(
             "Profil używa portów spoza listy zatwierdzonej przez administratora (ASI_ALLOWED_PORTS). Wybierz profil z portami „Dozwolone” (np. „Laboratorium”) albo wpisz porty z tej listy.",
@@ -334,6 +378,13 @@ async fn estimate_value(s: &AppState, target_ids: &[Uuid], profile_id: Uuid, win
     let win = window.cloned().unwrap_or_else(|| default_window(&settings));
     let window_seconds = window_minutes(&win) * 60;
     let mut notes = Vec::new();
+    if top_n {
+        notes.push(format!(
+            "Z {} najczęstszych portów skanowane są tylko zatwierdzone przez administratora: {}.",
+            if preset == "top1000" { 1000 } else { 100 },
+            t.ports
+        ));
+    }
     if excluded > 0 {
         notes.push(format!("Pominięto {excluded} adresów z celów wykluczonych."));
     }
@@ -1326,6 +1377,12 @@ mod tests {
         assert_eq!((t.ports.as_str(), t.port_count), ("22,80,443", 3));
         let t = tuning(&json!({ "ports": { "preset": "top1000" }, "rate_limit_rps": 20 }), &settings, &none);
         assert_eq!((t.rate, t.ports.as_str(), t.batch_size), (20, "1000", 256));
+    }
+
+    #[test]
+    fn top_n_presets_keep_only_approved_ports() {
+        let services = "# comment\nhttp\t80/tcp\t0.48\nssh\t22/tcp\t0.18\nsnmp\t161/udp\t0.43\nhttps\t443/tcp\t0.20\nredis\t6379/tcp\t0.0001\n";
+        assert_eq!(rank_ports(services), vec![80, 443, 22, 6379]);
     }
 
     #[test]
