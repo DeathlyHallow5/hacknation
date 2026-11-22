@@ -303,6 +303,51 @@ services:
       lab:
         ipv4_address: 172.30.0.20
         aliases: [wp.asi.test]
+  # One-shot installer: the image starts at the install wizard, which hides the front page and
+  # its generator/version from ASI. wp-cli (already in the image, nothing is downloaded) works on
+  # the site's own files (volumes_from) and DB; skips everything if WordPress is installed.
+  # Home URL follows the Host header so the page answers by IP and by name without a redirect;
+  # core auto-updates are off.
+  tl-wordpress-install:
+    profiles: [testlab]
+    image: wordpress:cli-2.12-php8.3
+    restart: "no"
+    user: "33:33"
+    depends_on:
+      tl-wordpress:
+        condition: service_started
+    volumes_from: [tl-wordpress]
+    environment:
+      WORDPRESS_DB_HOST: tl-mariadb
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpresspass
+      WORDPRESS_DB_NAME: wordpress
+      HOME: /tmp
+      WP_URL: http://wp.asi.test
+      WP_TITLE: ASI TestLab WordPress
+      WP_ADMIN_USER: admin
+      WP_ADMIN_PASSWORD: adminpass
+    entrypoint: ["sh", "-ec"]
+    command: &tl-wp-install
+      - |
+        cd /var/www/html
+        n=0; until [ -f wp-config.php ]; do n=$$((n+1)); [ $$n -lt 60 ] || { echo "no wp-config.php"; exit 1; }; sleep 2; done
+        n=0
+        until wp core is-installed 2>/dev/null; do
+          if wp core install --url="$$WP_URL" --title="$$WP_TITLE" --admin_user="$$WP_ADMIN_USER" \
+               --admin_password="$$WP_ADMIN_PASSWORD" --admin_email="$$WP_ADMIN_USER@asi.test" --skip-email; then
+            break
+          fi
+          n=$$((n+1)); [ $$n -lt 40 ] || { echo "wp core install failed"; exit 1; }
+          sleep 3
+        done
+        host=$${WP_URL#http://}
+        wp config set WP_HOME "\"http://\" . (isset(\$$_SERVER[\"HTTP_HOST\"]) ? \$$_SERVER[\"HTTP_HOST\"] : \"$$host\")" --raw --type=constant
+        wp config set WP_SITEURL WP_HOME --raw --type=constant
+        wp config set AUTOMATIC_UPDATER_DISABLED true --raw --type=constant
+        wp config set WP_AUTO_UPDATE_CORE false --raw --type=constant
+        echo "WordPress $$(wp core version) installed at $$WP_URL"
+    networks: [lab]
   tl-mariadb:
     profiles: [testlab]
     image: mariadb:11
@@ -422,6 +467,25 @@ services:
       lab:
         ipv4_address: 172.30.0.30
         aliases: [old.asi.test]
+  # Same installer, wp-cli 1.5 on PHP 5.6 to match this site; the site stays on 4.7.
+  tl-wordpress-old-install:
+    profiles: [testlab]
+    image: wordpress:cli-1.5-php5.6
+    restart: "no"
+    user: "33:33"
+    depends_on:
+      tl-wordpress-old:
+        condition: service_started
+    volumes_from: [tl-wordpress-old]
+    environment:
+      HOME: /tmp
+      WP_URL: http://old.asi.test
+      WP_TITLE: ASI TestLab WordPress 4.7
+      WP_ADMIN_USER: admin
+      WP_ADMIN_PASSWORD: adminpass
+    entrypoint: ["sh", "-ec"]
+    command: *tl-wp-install
+    networks: [lab]
   tl-mysql:
     profiles: [testlab]
     image: mysql:5.7
